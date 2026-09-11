@@ -24,10 +24,9 @@ These checks verify that the device hardware, dependencies, and GL-iNet environm
   - Confirm the device accepts `AT+QNWPREFCFG="mode_pref",NR5G:LTE` (the factory-state RAT lock). If the exact token differs (e.g., your modem uses `AT+QCFG="nwscanmode"` instead), update `RAT_LOCK_APPLY` in `files/lib/norypt-ghost/functions.sh` to match.
   - Fallback: If the above fails, try `AT+GSM_CMD="AT+QCFG=?"` and record the response; document the equivalent mode in a comment at the top of `functions.sh`.
 
-- [ ] **Cryptography tool for sealed-state storage**
-  - Run `command -v openssl && echo "present" || echo "absent"`.
-  - If **present**: The `norypt-ghost.factory` section will be sealed (encrypted) with a passphrase. Record this in your test notes.
-  - If **absent**: The factory state will remain in plaintext in the UCI config. A warning banner will appear during install. To enable sealing, run `opkg install openssl-util` and reinstall `norypt-ghost`.
+- [ ] **No-retention model (no factory capture)**
+  - Run `uci -q show norypt-ghost | grep -c '\.factory'` and confirm the count is **0** — the package never writes a `factory` section.
+  - Confirm `norypt-ghost install` only enables services and writes default options; it does not read, snapshot, or store any pre-existing identifier.
 
 - [ ] **GL-iNet telemetry directories (for cleanup validation)**
   - Run `ls -la /etc/oui-tertf /var/lib/nlbwmon /etc/vnstat /var/lib/vnstat 2>&1 | grep -v "cannot access"` to see which paths exist.
@@ -84,7 +83,6 @@ This section validates that a complete identity rotation works end-to-end: modem
 - [ ] **Trigger full-identity rotation**
   - Run `norypt-ghost new-identity`.
   - The command will:
-    - Seal the factory state (if openssl is available; plaintext if not).
     - Generate all new identifiers.
     - Write them to the modem and device configs.
     - Render the new join-Wi-Fi QR code (on-screen if tools present, or to the terminal).
@@ -185,60 +183,23 @@ This section confirms that the device does not retain logs of connected clients 
 
 ---
 
-## Sealed Factory State & Restore
+## No-Retention Model
 
-This section validates that the factory identity is securely stored and can be restored with a passphrase.
+This section validates that no factory/original identity is ever captured, stored, or restorable — the core no-retention guarantee.
 
-- [ ] **Verify sealed-state storage**
-  - Run `uci get norypt-ghost.factory.sealed`.
-  - If openssl is installed (from "Facts to Confirm First"), the response should be **1** (sealed).
-  - If openssl is not installed, the response may be **0** or the option may not exist (plaintext storage). This is acceptable and expected if openssl was not present during install.
-  - Next, verify no **plaintext** factory identifiers are stored:
-    - Run `uci get norypt-ghost.factory.imei1`. If the output is non-empty and looks like a valid IMEI (digits only), plaintext storage is in use. Log this for your test notes.
-    - If the output is empty or encrypted (unreadable), plaintext storage is **not** in use. This is the desired state.
+- [ ] **No factory section on flash**
+  - Run `uci -q show norypt-ghost`.
+  - Confirm there is **no** `norypt-ghost.factory` section and no stored IMEIs, MACs, SSIDs, or keys anywhere in the config.
 
-- [ ] **Restore to factory identity with SSH passphrase**
-  - SSH into the device.
+- [ ] **No `restore` path**
   - Run `norypt-ghost restore`.
-  - A prompt should appear: `Enter passphrase to restore factory identity:`.
-  - **Test 1 (wrong passphrase):** Enter an incorrect passphrase (e.g., `wrong123`). The device should:
-    - Print `Passphrase incorrect` or similar.
-    - **Abort** the restore (do NOT proceed to restore the identity).
-    - RF settings (modem, Wi-Fi) remain at their current (rotated) state.
-    - Command exit code is **non-zero**.
-  - **Test 2 (correct passphrase):** Run `norypt-ghost restore` again and enter the correct passphrase (recorded during install or shown during install; if you did not record it, see "Sealed factory section" in the code to find the passphrase storage location).
-    - The restore should proceed and print `Restoring factory identity...`.
-    - All modem settings, Wi-Fi BSSIDs, MACs, SSIDs, hostnames, and PSKs should revert to their **pre-rotation factory values** (the ones you recorded at the start).
-    - After restore, run `norypt-ghost status` and confirm all identifiers match the pre-rotation record.
-    - Command exit code is **0**.
-    - Device may reboot automatically; wait 60–90 seconds and verify SSH still works with the restored hostname.
+  - It should print an unknown-command/usage error and exit **non-zero**. There is nothing to restore to: rotation is forward-only.
 
-- [ ] **Verify LuCI "Restore Factory" button is disabled (sealed state only)**
-  - If the device is sealed (openssl present), open the LuCI web interface and navigate to **System > Backup / Flash Firmware** or **System > Factory Reset** (exact path varies by firmware version).
-  - The "Restore Factory" or "Reset to Factory Defaults" button should be **disabled** (greyed out).
-  - Hovering over it or inspecting the HTML should show a tooltip indicating that the device is sealed and that SSH is required to restore (the message will reference `norypt-ghost restore` over SSH).
-  - Fallback: If the button is still enabled, the LuCI integration is incomplete. Users can still restore via SSH, but the UI warning is missing.
-
-- [ ] **Verify opkg remove behavior on sealed device**
-  - While the device is still sealed, SSH in and run `opkg remove norypt-ghost`.
-  - The remove process should:
-    - Print a warning to the console that the modem keeps its current identity and that the operator must run `norypt-ghost restore` with the passphrase to restore the original identity (exact warning text: `norypt-ghost: factory state is SEALED — the modem KEEPS its current identity. To restore the original identity, run 'norypt-ghost restore' with your passphrase BEFORE or AFTER removal.`).
-    - Proceed to uninstall the package **without hanging**.
-    - Exit with code **0**.
-  - After removal, run `norypt-ghost status` (it should fail or print "not installed").
-  - The modem and Wi-Fi remain at their rotated identity (they are **not** restored by opkg removal on a sealed device).
-  - The user must manually run `norypt-ghost restore` (using SSH) to recover the factory identity. This is the intended behavior: sealed state locks the identity to the device itself, not to the installed package.
-
-- [ ] **Verify opkg remove on unsealed device restores factory identity**
-  - On an unsealed device (if openssl was not present), run `norypt-ghost install` again to re-seal it with openssl, or use the unsealed test device if you have one.
-  - Rotate the identity with `norypt-ghost new-identity` (the device will have a rotated identity).
-  - If the device is **unsealed**, run `opkg remove norypt-ghost`.
-  - The removal process should:
-    - Restore the **factory identity** to the modem and Wi-Fi.
-    - Re-enable GL-iNet's own BSSID randomization (if it was disabled by norypt-ghost).
-    - Exit with code **0**.
-  - After removal, run `norypt-ghost status` (it should fail or print "not installed").
-  - Verify the modem's IMEI and Wi-Fi BSSIDs have reverted to the **factory originals** (recorded at device first-boot, not from your pre-rotation record, which was after install).
+- [ ] **`opkg remove` keeps the current identity**
+  - Rotate the identity with `norypt-ghost new-identity`, then run `opkg remove norypt-ghost`.
+  - `prerm` stops and disables the services; `postrm` re-enables GL-iNet's own BSSID randomization and clears runtime state.
+  - The modem and Wi-Fi remain at their **current** rotated identity — removal does not (and cannot) restore an original identity, because none was ever stored.
+  - Run `norypt-ghost status`; it should report the package is not installed.
 
 ---
 
@@ -272,25 +233,20 @@ This section confirms that older command syntax still works (for backward compat
   - Wait for the next automatic reboot, or run the commit command if two-stage.
   - After reboot, verify with `norypt-ghost status` that the IMEI changed and the RAT lock is applied.
 
-- [ ] **Legacy restore command**
+- [ ] **No `restore` command exists**
   - Run `norypt-ghost restore`.
-  - This should prompt for a passphrase (same as in the sealed-state section).
-  - Verify the restore succeeds with the correct passphrase and restores all factory identifiers.
+  - It should print an unknown-command/usage error and exit non-zero — the no-retention model has no restore path.
 
 ---
 
-## Reinstall Preserves Captured Factory State
+## Reinstall Captures Nothing
 
-This section confirms that uninstalling and reinstalling the package does not lose the factory identity.
-
-- [ ] **Verify factory state is recoverable after remove + reinstall**
-  - Start with a device that has been rotated (identity changed).
-  - Record the current rotated identifiers with `norypt-ghost status`.
-  - Run `opkg remove norypt-ghost` (the identity remains rotated on a sealed device, or reverts to factory on an unsealed device; see the sealed-state section for details).
-  - Run `opkg install norypt-ghost` (or `./deploy.sh && norypt-ghost install` from the build host).
-  - On reinstall, the factory state is re-captured from the device's **current** modem and Wi-Fi state (before install).
-  - If the device was sealed, run `norypt-ghost restore` and verify it restores the identities from **before** the remove operation, not the factory-original identities.
-  - If the device was unsealed and reverted to factory, run `norypt-ghost status` and verify it shows the factory identifiers.
+- [ ] **Reinstall does not capture or change identity**
+  - Start with a device that has been rotated (identity changed); record it with `norypt-ghost status`.
+  - Run `opkg remove norypt-ghost` (the identity stays as-is — see the No-Retention Model section).
+  - Run `opkg install norypt-ghost` (or `./deploy.sh && norypt-ghost install`).
+  - Reinstall only re-enables services and writes default options; it captures no identifier.
+  - Run `norypt-ghost status` and confirm the identity is unchanged from before the remove.
 
 ---
 
@@ -301,7 +257,7 @@ All sections above must pass before the package is considered ready for customer
 - [ ] **All identifiers change on rotation** (modem IMEI, all Wi-Fi BSSIDs, hostname, MACs, SSID, PSK).
 - [ ] **Vendor coherence** (IMEI TAC, BSSID OUI, SSID brand all match).
 - [ ] **No persistent client logs** (syslog, DHCP leases, client list all empty after reboot).
-- [ ] **Sealed factory state** (with openssl present) and restore via passphrase works.
+- [ ] **No-retention model** (no `factory` section is written; `norypt-ghost restore` does not exist).
 - [ ] **TTL normalization** (egress TTL is 64 if the firewall backend supports it).
 - [ ] **RAT lock applied** (2G/3G blocked, NR5G/LTE only).
 

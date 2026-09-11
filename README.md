@@ -6,8 +6,8 @@
 
 *Every identifier your router broadcasts — IMEI, MAC, BSSID, SSID, hostname, host keys — rotated together, coherently, in one command.*
 
-[![Build (script)](https://github.com/norypt-prv/Norypt-Mudi7/actions/workflows/build.yml/badge.svg)](https://github.com/norypt-prv/Norypt-Mudi7/actions/workflows/build.yml)
-[![Build (SDK)](https://github.com/norypt-prv/Norypt-Mudi7/actions/workflows/sdk-build.yml/badge.svg)](https://github.com/norypt-prv/Norypt-Mudi7/actions/workflows/sdk-build.yml)
+[![Build (script)](https://github.com/norypt-website/Norypt-Mudi7/actions/workflows/build.yml/badge.svg)](https://github.com/norypt-website/Norypt-Mudi7/actions/workflows/build.yml)
+[![Build (SDK)](https://github.com/norypt-website/Norypt-Mudi7/actions/workflows/sdk-build.yml/badge.svg)](https://github.com/norypt-website/Norypt-Mudi7/actions/workflows/sdk-build.yml)
 [![License: GPL-2.0](https://img.shields.io/badge/License-GPL--2.0-blue.svg)](#license)
 [![Platform](https://img.shields.io/badge/platform-GL--E5800%20(Mudi%207)-8900ff.svg)](#compatibility)
 [![Verified TACs](https://img.shields.io/badge/TAC%20pool-verified-00c2ff.svg)](#imei-realism-the-profile-catalog)
@@ -52,18 +52,18 @@ Norypt Ghost picks **one real device profile** per rotation. The IMEI's TAC vend
 
 Every TAC in the catalog is the real first-8 digits of a genuine device IMEI, sourced from a public IMEI registry with the URL recorded per entry.
 
-A fabricated TAC — or a real one whose radio bands don't match the cell you attach to — is detectable, and has been confirmed to trigger carrier throttling.
+A fabricated TAC — or a real one whose radio bands don't match the cell you attach to — is internally inconsistent, and an inconsistent identity is a weaker privacy measure than a coherent one.
 
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 
-### Hides in the biggest crowd
+### Blends into the largest anonymity set
 
 The catalog presents the device as a popular smartphone tethering its SIM — millions of identical units — rather than a niche hotspot model with a few thousand.
 
-Modern phones also randomize their own hotspot BSSID, so the locally-administered MAC bit reads as *normal phone behavior* instead of a spoofing tell.
+Modern phones also randomize their own hotspot BSSID, so the locally-administered MAC bit reads as *normal phone behavior* rather than an anomaly.
 
 </td>
 <td width="50%" valign="top">
@@ -72,13 +72,17 @@ Modern phones also randomize their own hotspot BSSID, so the locally-administere
 
 Stock firmware keeps a permanent on-flash database of every client that ever connected, plus DNS query logs, lease files, and bandwidth stats per device.
 
-Norypt Ghost RAM-backs all of it. Seize the router, and there is no history of who used it — and `norypt-ghost check` fails loudly if that ever stops being true.
+Norypt Ghost RAM-backs all of it, so the device keeps no standing record of who connected — data minimization by default, the way a privacy-first device should behave. `norypt-ghost check` fails loudly if that ever stops being true.
 
 </td>
 </tr>
 </table>
 
-> **Legal note:** changing a device's IMEI is restricted or unlawful in some jurisdictions. This software is provided for lawful privacy work and personal use where permitted. You are responsible for compliance with your local laws.
+### Intended use and legal notice
+
+Norypt Ghost is a privacy-research and personal-privacy tool for people working on hardware they own. It is intended for security and privacy research, education, testing on equipment you own or are authorized to test, and lawful personal-privacy use where permitted.
+
+**Modifying a device's IMEI, and altering network identifiers, is restricted or a criminal offense in many jurisdictions.** You are solely responsible for ensuring your use complies with all applicable laws and with your mobile carrier's terms of service. Do not use this project to commit fraud, to evade lawful process, to interfere with networks or devices you do not own, or for any other unlawful purpose. It is provided "as is," without warranty, and the authors accept no liability for misuse. If you are unsure whether a particular use is lawful where you are, do not proceed.
 
 ---
 
@@ -123,7 +127,7 @@ Norypt Ghost RAM-backs all of it. Seize the router, and there is no history of w
 | 🔁 | **Two-stage SIM swap** | Throwaway IMEIs written before poweroff, final IMEIs on next boot *before* first attach — neither real identity bridges the swap |
 | 🧹 | **No connected-device logs** | Syslog, DNS query log, DHCP leases, client-MAC DB, and bandwidth stats all RAM-backed — nothing about a client reaches flash |
 | 🕳️ | **No-retention model** | No factory/original identity is ever captured, stored, or recoverable — there is nothing on flash that bridges an old identity to a new one |
-| 🥷 | **TTL normalization** | Egress TTL/hop-limit pinned to 64, so NATed client traffic doesn't betray tethering by TTL decrement |
+| 🥷 | **TTL normalization** | Egress TTL/hop-limit pinned to 64, so forwarded client traffic stays consistent with the single-device profile the tool presents |
 | 🔑 | **Host-key rotation** | SSH host keys and the LuCI TLS cert regenerated — permanent identifiers that survive every lesser rotation |
 | 🩺 | **Health check** | `norypt-ghost check` — read-only self-test of modem, generator, services, and the no-logs guarantee; non-zero exit on failure |
 | 🖥️ | **Three control surfaces** | CLI over SSH, a LuCI admin page, and an on-device touchscreen menu (2-second clock long-press) |
@@ -195,7 +199,7 @@ The admin page lives under **Services → Norypt Ghost** in LuCI.
 | **Actions** | **New Identity** (primary, double-confirmed — full rotation + reboot), then the advanced partial actions: Rotate IMEIs, Rotate Wireless/System, SIM Swap |
 | **IMEI** | Current IMEI per slot, IMSI, and live network state (registration / operator / signal, loaded asynchronously) |
 | **Wireless/System Identity** | Current SSID, all nine MACs/BSSIDs, hostname, and the main/guest passwords (masked, with Show/Hide) |
-| **Rotation Options** | Boot-rotation master toggle + per-feature checkboxes; per-slot IMEI mode radios with inline-validated static fields; re-attach timeout; touchscreen trigger. A separate **Security / Region** section holds the RAT lock and default region. Every control saves instantly |
+| **Rotation Options** | Per-feature checkboxes; per-slot IMEI mode radios with inline-validated static fields; re-attach timeout; touchscreen trigger. A separate **Security / Region** section holds the RAT lock and default region. Every control saves instantly |
 | **Last Command Log** | Output of the most recent operation (`/tmp/norypt-ghost.log`) |
 
 > Screenshots are intentionally not committed — the admin page displays live IMEIs, IMSIs, and BSSIDs, and publishing a real unit's would expose them permanently.
@@ -317,7 +321,7 @@ The single command that changes **everything at once**, across a clean reboot:
 
 ### IMEI realism: the profile catalog
 
-`files/usr/share/norypt-ghost/profiles.json` is the heart of the disguise. Each entry is one complete, coherent real-device archetype:
+`files/usr/share/norypt-ghost/profiles.json` is the heart of the coherent-identity model. Each entry is one complete, consistent real-device archetype:
 
 ```jsonc
 {
@@ -372,14 +376,14 @@ If a *write* fails, Norypt Ghost deliberately leaves RF **off** rather than tran
 | Mode | Behavior | Trade-off |
 |---|---|---|
 | **Random** *(default)* | A TAC from the pool + 6 rejection-sampled serial digits + Luhn check digit | Best unlinkability |
-| **Deterministic** | `luhn(tac[djb2(IMSI) % n] + serial(djb2(IMSI)))` — the same SIM always maps to the same IMEI | Useful when a carrier flags frequent IMEI changes, but djb2 is a *public, unkeyed* hash: anyone who once observes the IMEI↔IMSI pairing can re-derive it forever |
+| **Deterministic** | `luhn(tac[djb2(IMSI) % n] + serial(djb2(IMSI)))` — the same SIM always maps to the same IMEI | Useful when a stable per-SIM identity is preferable to one that changes, but djb2 is a *public, unkeyed* hash: anyone who once observes the IMEI↔IMSI pairing can re-derive it forever |
 | **Static** | A user-supplied 15-digit IMEI, Luhn-validated client- *and* server-side | Written verbatim on every rotation |
 
 All three fall back to Random (with a warning) if their inputs are unavailable, so a rotation never fails on a missing IMSI or unset static value.
 
 The Random pool (`files/usr/share/norypt-ghost/tac_pool.json`) is **phone-only** — real Apple and Samsung smartphone TACs, no mobile-hotspot or modem TACs — so `rotate` and `sim-swap` produce a genuine phone IMEI just like `new-identity` does. (Note that `rotate` changes *only* the IMEIs: for a single coherent phone across IMEI **and** Wi-Fi/SSID/hostname together, use `new-identity`.)
 
-**Band matching matters.** Carriers can compare a reported IMEI's expected capabilities against the cell it connects on — a 4G-only TAC on a 5G NR cell is a contradiction, confirmed on real hardware to trigger ~10 Mbps throttling on at least one carrier. Every catalog profile records its band set for exactly this reason.
+**Band matching matters.** A coherent identity has to be internally consistent: a 4G-only TAC presented on a 5G NR cell is a contradiction, and an inconsistent profile is a weaker privacy measure than a consistent one. Every catalog profile records its band set so the presented device stays plausible.
 
 ### SIM-swap flow
 
@@ -423,7 +427,7 @@ Applied by `norypt-ghost-clean` at **S9**, before any tracking daemon starts:
 - **`tmpfs` over every telemetry directory present** — `/etc/oui-tertf` (client-MAC tracker), `/var/lib/nlbwmon` (bandwidth monitor), `/etc/vnstat` and `/var/lib/vnstat` (traffic stats). Each daemon keeps writing, believing it's on flash; the data evaporates every reboot.
 - **dnsmasq** runs with `logqueries=0` and `cachelocal=0` — no per-client DNS query log, no persisted cache.
 - **DHCP leases forced to `/tmp`** if the firmware ever points `leasefile` at flash.
-- **Rotation timestamps stay in RAM.** The "last IMEI / wireless rotation" markers live in `/tmp`, never `/etc` — a persisted timestamp would be a forensic trace of *when* the identity last changed. The cleaner also sweeps any such file left on flash by an older build.
+- **Rotation timestamps stay in RAM.** The "last IMEI / wireless rotation" markers live in `/tmp`, never `/etc` — a persisted timestamp would be retained metadata about *when* the identity last changed, which the no-retention model avoids keeping on flash. The cleaner also sweeps any such file left on flash by an older build.
 
 The pre-existing on-flash client database is unlinked at first run. *(It is unlinked, not overwritten: the Mudi 7's overlay is ext4 on eMMC, whose flash translation layer remaps writes, so overwrite-in-place tools like `shred` are ineffective. The tmpfs mount is the real protection.)*
 
@@ -431,18 +435,18 @@ The pre-existing on-flash client database is unlinked at first run. *(It is unli
 
 ### No-retention model
 
-Norypt Ghost **never captures or stores your device's original identity.** There is no `factory` section, no sealed vault, no `restore` path — because a stored copy of the real IMEIs, MACs, SSIDs and keys is itself a complete recovery key for the very identity the tool exists to hide. If it were ever seized, that record alone would bridge every rotation back to the original device.
+Norypt Ghost **never captures or stores your device's original identity.** There is no `factory` section, no sealed vault, no `restore` path — because a stored copy of the real IMEIs, MACs, SSIDs and keys is itself a complete recovery key that would link every rotated identity straight back to the original device. Keeping nothing is the point: rotation is forward-only, and there is no retained record that could undo it.
 
 - **Install captures nothing.** `norypt-ghost install` only enables the services and writes safe UCI defaults. It does not read, snapshot, or persist any pre-existing identifier.
 - **No restore, by design.** There is nothing to restore *to*. Rotation is forward-only: each `new-identity`/`rotate` derives a fresh coherent identity and leaves no on-flash trail linking it to what came before.
 - **Stable across reboots.** Identity does not drift on its own — it stays put until you change it via the CLI or the on-device menu. (Boot-time wireless rotation exists as an explicit opt-in toggle, off by default.)
-- **Nothing on flash bridges old to new.** Combined with the RAM-backed logs above, a powered-down seized device holds only its *current* identity and no history of any prior one.
+- **Nothing on flash bridges old to new.** Combined with the RAM-backed logs above, a powered-down device holds only its *current* identity and no record of any prior one.
 
 ### TTL normalization
 
-Carriers detect tethering partly by TTL: packets forwarded through a router arrive one hop "shorter" than packets originated by the phone itself. An IMEI claiming to be an iPhone, contradicted by visibly-forwarded traffic, is a weak disguise.
+A router forwards client packets with the IP TTL / IPv6 hop-limit decremented by one, so forwarded traffic is distinguishable from traffic the phone originates itself. That inconsistency contradicts a profile that presents as a single phone.
 
-`norypt-ghost-ttl` (S45) pins egress IPv4 TTL and IPv6 hop-limit to **64** via `nft`, falling back to `iptables`/`ip6tables` — so NATed client traffic looks device-originated.
+`norypt-ghost-ttl` (S45) pins egress IPv4 TTL and IPv6 hop-limit to **64** via `nft`, falling back to `iptables`/`ip6tables` — so forwarded client traffic stays consistent with the presented single-device profile.
 
 ### Splash screens
 
@@ -499,7 +503,7 @@ The touchscreen daemon is compiled from `src/` — **no binaries are committed t
 ### 1 — `build-ipk.sh` (no OpenWrt SDK required)
 
 ```sh
-git clone https://github.com/norypt-prv/Norypt-Mudi7.git
+git clone https://github.com/norypt-website/Norypt-Mudi7.git
 cd Norypt-Mudi7
 sudo apt install -y gcc-aarch64-linux-gnu   # or have Docker available
 ./build-ipk.sh
@@ -672,6 +676,6 @@ Norypt Ghost inherits GPL-2.0-only from blue-merle-v2. Code derived from SRLabs'
 
 ---
 
-**Norypt Ghost** · Radio-identity rotation for the Mudi 7 · [Report an issue](https://github.com/norypt-prv/Norypt-Mudi7/issues)
+**Norypt Ghost** · Radio-identity rotation for the Mudi 7 · [Report an issue](https://github.com/norypt-website/Norypt-Mudi7/issues)
 
 </div>

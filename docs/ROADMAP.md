@@ -46,20 +46,18 @@ required before these are called shipped.
   the flash syslog file, disables dnsmasq query logging/cache, and forces
   DHCP leases to `/tmp`. `norypt-ghost check` reports pass/fail per
   directory.
-- **Sealed factory state** (partially closes Item 4). `factory_mode=sealed`
-  (default when `openssl` is present) AES-256-CBC/PBKDF2-encrypts the
-  `factory` UCI section behind an install-time passphrase; restore requires
-  an interactive SSH session and the passphrase — non-interactive callers
-  (prerm, backgrounded LuCI restore) refuse rather than fail silently or
-  leave state in a half-restored condition. **Trade-off, stated plainly: a
-  forgotten passphrase means the factory identity cannot be recovered.**
-  **Not closed:** the `last_*_rotate` timestamp-to-flash and
-  export/import-factory sub-items are still open.
+- **No-retention model** (closes Item 4). Factory capture, sealing, and the
+  `restore` path were removed entirely: no `factory` UCI section is ever
+  written, so there is no stored copy of the original IMEIs, MACs, SSIDs, or
+  keys to seal or leak. `install` is setup-only (enable services + write
+  defaults); rotation is forward-only. The `last_*_rotate` timestamps were
+  moved off flash into RAM (`/tmp`), and the boot cleaner sweeps any legacy
+  `/etc` copy.
 - **TTL/hop-limit normalization** (new capability, not in the original
   numbered list). `norypt-ghost-ttl` sets egress TTL/hop-limit to 64 via
-  `nft` (or `iptables`/`ip6tables` fallback) so NATed client traffic no
-  longer reveals itself by TTL decrement — defeats the common
-  carrier tethering-detection heuristic.
+  `nft` (or `iptables`/`ip6tables` fallback) so forwarded client traffic no
+  longer stands out by its TTL decrement, keeping it consistent with the
+  single-device profile the tool presents.
 - **SSH/TLS regen.** `IDENTITY_REGEN_KEYS` (part of `new-identity`)
   regenerates the dropbear host keys and the LuCI self-signed TLS cert —
   both are permanent device identifiers that survived every prior rotation.
@@ -133,28 +131,18 @@ too if present.
 
 ### 4. Factory identity is stored in cleartext on flash · **M**
 
-**◐ Partially delivered** — see [Delivered](#delivered). The `sealed`
-`factory_mode` ships (encrypted, SSH-only, passphrase-gated restore); the
-`last_*_rotate` timestamps still land on flash and `export-factory` /
-`import-factory` do not exist yet.
+**✅ Delivered — resolved by the no-retention model.** The original design
+captured the factory identity into a `factory` UCI section (optionally sealed)
+so it could be restored. That was abandoned: a stored copy of the real IMEIs,
+MACs, SSIDs, and keys is itself a complete recovery key for the identity the
+tool rotates away from, and holding it on the device defeats the purpose. The
+shipped model captures nothing — there is no `factory` section, no sealed
+vault, and no `restore` path. `install` only enables services and writes
+defaults; rotation is forward-only.
 
-`/etc/config/norypt-ghost` holds the real IMEIs for both slots, all seven
-factory MACs, factory SSIDs, hostname, **and the factory Wi-Fi keys** — in
-plaintext, on the device, forever. It is what makes `restore` and clean
-uninstalls work, and it is also a complete recovery key for the identity the
-tool exists to hide. Whoever holds the device holds the real identity.
-
-Compounding it: `/etc/norypt-ghost.last_imei_rotate` and
-`.last_wireless_rotate` write **rotation timestamps to flash**, leaving a
-dated history of when identities changed.
-
-**Fix, layered:**
-- Move the `last_*_rotate` timestamps to `/tmp` (they are UI conveniences).
-- Add a `factory_state` mode: `plain` (today), `sealed` (encrypted with a
-  passphrase entered at restore time), or `none` (one-way rotation — restore
-  is impossible, and `opkg remove` says so loudly).
-- Add `norypt-ghost export-factory` / `import-factory` so the state can live
-  off-device instead.
+The related `last_*_rotate` timestamp leak was also closed: those markers now
+live in RAM (`/tmp`), never `/etc`, and the boot cleaner sweeps any legacy
+`/etc` copy left by an older build.
 
 ### 5. The forced locally-administered bit defeats vendor spoofing · **M**
 
@@ -184,8 +172,8 @@ describes repeater-mode co-location specifically, not all AP operation.
 who observes one IMEI↔IMSI pairing can re-derive every future IMEI for that
 SIM, permanently, because the algorithm is public and there is no secret.
 
-**Fix:** generate a random 32-byte secret at install, store it with the
-factory state, and derive the IMEI from `HMAC(secret, IMSI)` instead. Same
+**Fix:** generate a random 32-byte secret at install, store it in the
+package's UCI config, and derive the IMEI from `HMAC(secret, IMSI)` instead. Same
 per-SIM stability, no external derivability. Regenerating the secret rotates
 every deterministic IMEI at once — a useful panic action in itself.
 
@@ -297,7 +285,7 @@ capability, not on an unrecognised number.
 ### 16. Package does not survive firmware upgrades · **S**
 
 A GL.iNet firmware upgrade removes the package *without* running `prerm`, so
-the modem keeps its rotated IMEIs while the tool that can restore them is
+the modem keeps its rotated IMEIs while the package that manages rotation is
 gone, and GL-iNet's own BSSID randomization stays disabled.
 
 **Fix:** register the config in `/lib/upgrade/keep.d/`, and ship a documented
@@ -329,5 +317,5 @@ problem.
 coverage, the LA-bit experiment, and the unified rotate. This is where the
 tool stops being a port and becomes a Norypt product.
 
-**Third pass:** items 4, 13, 14 — sealed factory state, cell monitoring, and
-the test suite. Larger, and each is worth its own design pass.
+**Third pass:** items 13, 14 — cell monitoring and the test suite. Larger,
+and each is worth its own design pass.

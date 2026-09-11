@@ -13,13 +13,13 @@ define Package/norypt-ghost
 	SECTION:=utils
 	CATEGORY:=Utilities
 	EXTRA_DEPENDS:=luci-base, lua, luabitop
-	TITLE:=Anonymity Enhancements for GL-iNet GL-E5800 Mudi 7
+	TITLE:=Coordinated device-identity rotation for GL-iNet GL-E5800 (Mudi 7)
 endef
 
 define Package/norypt-ghost/description
-	norypt-ghost enhances anonymity and reduces forensic traceability of the
+	norypt-ghost rotates the device identity of the
 	GL-iNet GL-E5800 (Mudi 7) 5G mobile Wi-Fi router by randomizing IMEI,
-	MAC addresses, SSID, hostname, and Wi-Fi password on every boot or on demand.
+	MAC addresses, SSID, hostname, and Wi-Fi password on demand or at boot.
 endef
 
 # Local source package — no PKG_SOURCE tarball, so stage src/ into the

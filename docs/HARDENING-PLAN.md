@@ -1,5 +1,7 @@
 # Norypt Ghost Hardening Implementation Plan
 
+> **⚠️ Historical implementation plan — partially superseded.** **Phase E (sealed factory state)** was dropped: the shipped product uses a **no-retention model** that never captures or stores the original identity, so `seal.sh`, the `factory` section, and the `restore` path described below do not exist in the shipped build (see [NO-LOG-MENU-PLAN.md](NO-LOG-MENU-PLAN.md) and the README). Kept for provenance; the README is authoritative for the shipped product.
+
 > Implementation plan: each task lists the exact files, test code, and bite-sized steps (TDD, one commit per task). Complete them in order.
 
 **Goal:** Turn Norypt Ghost's per-field randomization into coherent full-device-identity rotation — one real-looking device profile per rotation, every identifier changing together across a reboot, with no connected-device history left on flash and the factory identity sealed.
@@ -1269,8 +1271,8 @@ git commit -m "feat: seal factory identity at install; passphrase-gated restore;
 ```sh
 #!/bin/sh /etc/rc.common
 # SPDX-License-Identifier: GPL-2.0-only
-# Norypt Ghost — normalize egress TTL/hop-limit to 64 so NATed client traffic
-# looks device-originated (defeats TTL-based tethering detection).
+# Norypt Ghost — normalize egress TTL/hop-limit to 64 so forwarded client traffic
+# is consistent with the single-device profile the tool presents.
 START=45
 STOP=10
 _apply() {
@@ -1299,7 +1301,7 @@ stop()  { nft delete table inet norypt_ghost 2>/dev/null; \
 Run: `shellcheck -s sh files/etc/init.d/norypt-ghost-ttl && echo OK`
 ```bash
 git add files/etc/init.d/norypt-ghost-ttl
-git commit -m "feat: normalize egress TTL/hop-limit to 64 (anti tethering-detection)"
+git commit -m "feat: normalize egress TTL/hop-limit to 64 (identity coherence)"
 ```
 
 > **On-device note:** confirm the firewall backend (`nft` on 23.05 GL builds vs iptables-legacy) and that the `TTL`/`HL` targets or nft `ttl set` are compiled in; keep whichever branch works, drop the other.

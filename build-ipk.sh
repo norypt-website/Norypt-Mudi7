@@ -110,10 +110,10 @@ Section: utils
 Maintainer: Norypt Team
 Architecture: ${ARCH}
 Installed-Size: ${INSTALLED_SIZE}
-Description: Anonymity Enhancements for GL-iNet GL-E5800 Mudi 7
- norypt-ghost enhances anonymity and reduces forensic traceability of the
+Description: Coordinated device-identity rotation for GL-iNet GL-E5800 (Mudi 7)
+ norypt-ghost rotates the device identity of the
  GL-iNet GL-E5800 (Mudi 7) 5G mobile Wi-Fi router by randomizing IMEI,
- MAC addresses, SSID, hostname, and Wi-Fi password on every boot or on demand.
+ MAC addresses, SSID, hostname, and Wi-Fi password on demand or at boot.
 EOF
 
 # ── preinst ───────────────────────────────────────────────────────────────────

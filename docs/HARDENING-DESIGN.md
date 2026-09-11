@@ -4,6 +4,8 @@
 
 Status: approved for planning. Author: Norypt.
 
+> **⚠️ Historical design record — partially superseded.** This document captures the original hardening design and is kept for provenance. Two parts changed before shipping: (1) the factory-identity **capture / sealing / restore** design in Section 5 was dropped in favor of a **no-retention model** — no original identity is ever captured or stored (see [NO-LOG-MENU-DESIGN.md](NO-LOG-MENU-DESIGN.md) and the README); and (2) the device-profile catalog shipped **phone-only**, so any hotspot-profile examples below reflect the earlier design, not the shipped catalog. The README is the authoritative description of the shipped product.
+
 ## Goal
 
 Three user requirements drive this work:
@@ -183,8 +185,8 @@ Details:
 - **Boot ordering** places `norypt-ghost-clean` before `gl_clients`,
   `dnsmasq`, and `gl-tertf`, so those daemons write to RAM from their first
   write rather than being cleaned up after the fact.
-- **Shutdown** wipes the RAM-backed copies so a pulled-power forensic capture
-  of the eMMC finds nothing.
+- **Shutdown** wipes the RAM-backed copies so a later read of the eMMC finds
+  no retained history.
 - **Path discovery is defensive.** Each path is checked for existence on the
   actual firmware; anything absent is skipped, never fatal. The real set of
   GL.iNet telemetry paths is confirmed on-device during implementation.
@@ -217,10 +219,11 @@ encrypted with a passphrase set at install.
 ## Section 6 — Additional hardening
 
 - **TTL / hop-limit normalization.** An nftables (or iptables, matching the
-  firmware's firewall) rule sets egress TTL to 64 so NATed client traffic
-  appears to originate on the device itself. Without it, an IMEI claiming to be
-  a phone is contradicted by the decremented TTL of visibly-forwarded packets —
-  the standard tethering-detection signal. Near-zero cost, direct realism gain.
+  firmware's firewall) rule pins egress TTL/hop-limit to 64 so forwarded client
+  traffic stays consistent with the single-device profile the tool presents.
+  Without it, the decremented TTL of forwarded packets contradicts a profile
+  that claims to be one phone. Near-zero cost, keeps the presented identity
+  internally consistent.
 - **SSH host keys + LuCI TLS cert regeneration.** Both are permanent device
   identifiers that currently survive every MAC and IMEI change; anyone who has
   connected once can re-identify the device across all rotations. Regenerated
