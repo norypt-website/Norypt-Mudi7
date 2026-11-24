@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,6 +67,8 @@
 #define RUNNING_POLL_MS    200    /* handoff poll granularity                 */
 #define BUSY_HOLD_MS       1500   /* busy label for no-handoff actions        */
 #define IMEI_HOLD_MS       4000   /* keep the masked-IMEI frame on screen     */
+#define TAKEDOWN_GRACE_MS  120000 /* reboot/poweroff must happen within this, *
+                                   * else the action failed: unfreeze panel   */
 
 /* Clock region (top-left status bar) in TOUCH coordinates — confirmed via live
  * evdev capture, tap at X=28 Y=15. This is the menu-open gesture and is NOT run
@@ -216,9 +219,29 @@ static void run_state(fb_t *fb, int item)
     }
 }
 
+/* Stop request (procd stop, touch_enabled=0, package removal, upgrade):
+ * unfreeze gl_screen immediately — the only async-signal-safe work — and let
+ * the main loop finish the clean close. procd escalates to SIGKILL after its
+ * timeout, so the SIGCONT must not wait for the loop. */
+static volatile sig_atomic_t g_stop;
+static void on_stop(int sig)
+{
+    (void)sig;
+    fbdev_resume_frozen();
+    g_stop = 1;
+}
+
 int main(void)
 {
     openlog("norypt-ghost-touch", LOG_PID, LOG_DAEMON);
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = on_stop;          /* no SA_RESTART: poll/read return EINTR */
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGHUP, &sa, NULL);
 
     /* No SIGCHLD handler: run_action() double-forks so the CLI grandchild
      * reparents to init, and the intermediate child is reaped explicitly with
@@ -245,12 +268,18 @@ int main(void)
     ng_item_t items[NG_ITEM_COUNT];
     int pending = -1;             /* selected item awaiting CONFIRM */
     long menu_activity = 0;       /* last input time in MENU/CONFIRM (ms) */
+    long takedown_at = 0;         /* when a reboot/poweroff was dispatched (ms) */
 
     for (;;) {
+        if (g_stop)
+            break;
         struct pollfd pfd = { .fd = fd, .events = POLLIN, .revents = 0 };
         int timeout = -1;
         if (state == ST_MENU || state == ST_CONFIRM) {
             long rem = IDLE_TIMEOUT_MS - (now_ms() - menu_activity);
+            timeout = rem > 0 ? (int)rem : 0;
+        } else if (takedown_at) {
+            long rem = TAKEDOWN_GRACE_MS - (now_ms() - takedown_at);
             timeout = rem > 0 ? (int)rem : 0;
         }
 
@@ -262,6 +291,16 @@ int main(void)
             break;
         }
         if (pr == 0) {
+            /* Takedown watchdog: still alive long after a reboot/poweroff was
+             * dispatched means the action failed (the CLI's own error frame
+             * is suppressed while we own the panel) — unfreeze gl_screen so
+             * the device is usable and the GL UI shows its real state. */
+            if (takedown_at && now_ms() - takedown_at >= TAKEDOWN_GRACE_MS) {
+                syslog(LOG_WARNING, "takedown action did not take the device down — restoring panel");
+                fbdev_resume_frozen();
+                takedown_at = 0;
+                continue;
+            }
             /* Idle timeout — only armed in MENU/CONFIRM. */
             if (state == ST_MENU || state == ST_CONFIRM) {
                 syslog(LOG_INFO, "menu idle %dms — auto-cancel", IDLE_TIMEOUT_MS);
@@ -372,7 +411,10 @@ int main(void)
         }
         /* YES — run it. run_state() closes the framebuffer per action class. */
         syslog(LOG_NOTICE, "confirm: YES — running %s", ACTIONS[pending].subcmd);
+        int was_takedown = ACTIONS[pending].takedown;
         run_state(&fb, pending);
+        if (was_takedown)
+            takedown_at = now_ms();
         state = ST_IDLE;
         pending = -1;
     }
@@ -383,6 +425,8 @@ int main(void)
      * NULLed fb.px; guarding on fb.px keeps a post-takedown EOF exit from
      * repainting the stock UI over that frame. (NULL px is a safe no-op close.) */
     fbdev_close(&fb, fb.px != NULL);
+    if (g_stop)
+        fbdev_resume_frozen();        /* stop request: never leave it frozen */
     close(fd);
     closelog();
     return 0;

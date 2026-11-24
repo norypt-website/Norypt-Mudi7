@@ -78,10 +78,8 @@ end
 -- Generate a random 15-digit Luhn-valid IMEI using a TAC from the pool.
 local function gen_imei_from_pool(pool)
     local tac = pick_tac(pool)
-    -- 6 random serial digits.
-    local serial = ""
-    for _ = 1, 6 do serial = serial .. tostring(math.random(0, 9)) end
-    return luhn.make_imei(tac .. serial)
+    -- 6 serial digits, rejection-sampled from /dev/urandom.
+    return luhn.make_imei(tac .. gen_serial(6))
 end
 
 -- djb2 hash of a string → integer seed in [0, 2^31).

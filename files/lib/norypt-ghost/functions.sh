@@ -73,12 +73,29 @@ _recovery_hint() {
 # tmpfs only; the touch daemon renders then deletes it. Never on flash.
 # $1 = old IMEI slot1, $2 = old IMEI slot2 (optional), $3 = new IMEI slot1, $4 = new IMEI slot2 (optional)
 _emit_rotate_display() {
-    # Subshell scopes the umask to this write only — it never leaks to the caller.
+    # Only the touch daemon reads (then deletes) this file; from the CLI or
+    # LuCI it would just linger in RAM holding the old IMEI.
+    [ -n "$NG_ONSCREEN" ] || return 0
+    # Masked here, before anything is written: even the RAM handoff never
+    # holds a full IMEI. Subshell scopes the umask to this write only.
     ( umask 077
-      { printf 'old %s\nnew %s\n' "$1" "$3"
-        [ -n "$2" ] && [ -n "$4" ] && printf 'old2 %s\nnew2 %s\n' "$2" "$4"
+      { printf 'old %s\nnew %s\n' "$(_imei_tail "$1")" "$(_imei_tail "$3")"
+        [ -n "$2" ] && [ -n "$4" ] && printf 'old2 %s\nnew2 %s\n' "$(_imei_tail "$2")" "$(_imei_tail "$4")"
       } > /tmp/norypt-ghost.rotate-display
     )
+}
+
+# "............572": only the last three digits of an IMEI.
+_imei_tail() {
+    [ ${#1} -gt 3 ] || { printf '...'; return; }
+    printf '............%s' "${1#"${1%???}"}"
+}
+
+# 4-hex-digit check tag over both IMEIs. Lets the boot check tell "modem kept
+# the new IMEIs" from "modem reverted" without any IMEI on flash: 16 bits
+# cannot be turned back into a pair of 15-digit IMEIs.
+IMEI_TAG() {
+    printf '%s:%s' "$1" "$2" | sha256sum | cut -c1-4
 }
 
 # ── Modem AT helpers ─────────────────────────────────────────────────────────
@@ -205,7 +222,47 @@ SET_IMEIS() {
     done
 }
 
+# True only if both slots read back exactly the given IMEIs.
+# $1 = expected Slot 1 IMEI, $2 = expected Slot 2/eSIM IMEI
+VERIFY_IMEIS() {
+    [ -n "$1" ] && [ -n "$2" ] || return 1
+    [ "$(READ_IMEI)" = "$1" ] && [ "$(READ_IMEI_SLOT2)" = "$2" ]
+}
+
+# True if $1 is a 15-digit, Luhn-valid IMEI.
+IMEI_VALID() {
+    case "$1" in *[!0-9]*|'') return 1 ;; esac
+    [ ${#1} -eq 15 ] || return 1
+    local i=1 sum=0 d rest="$1"
+    while [ "$i" -le 14 ]; do
+        d="${rest%"${rest#?}"}"; rest="${rest#?}"
+        if [ $((i % 2)) -eq 0 ]; then
+            d=$((d * 2)); [ "$d" -gt 9 ] && d=$((d - 9))
+        fi
+        sum=$((sum + d)); i=$((i + 1))
+    done
+    [ $(( (10 - sum % 10) % 10 )) -eq "$rest" ]
+}
+
+# Random IMEI on a VERIFIED phone TAC from the profile catalog (profiles.json),
+# chosen for the SIM's region (IMSI MCC, else default_region). The serial comes
+# from /dev/urandom (fromtac mode). Falls back to the legacy tac_pool only if
+# the catalog yields nothing.
 GENERATE_IMEI() {
+    local default_region region id idx tac
+    default_region="$(uci -q get norypt-ghost.options.default_region 2>/dev/null)"
+    case "$default_region" in EU|NA) ;; *) default_region=NA ;; esac
+    region="$(_mcc_region "$(READ_MCC)" "$default_region")"
+    id="$(_profile_pick "$region" 2>/dev/null)"
+    if [ -n "$id" ] && idx="$(_profile_index "$id")"; then
+        # Every catalog TAC is verified=true with a source URL — enforced by
+        # tests/validate_profiles.py --release in CI.
+        tac="$(_profile_pick_array "$idx" 'imei_tacs[*].tac')"
+    fi
+    case "$tac" in
+        [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9])
+            lua /lib/norypt-ghost/imei_generate.lua fromtac "$tac" && return 0 ;;
+    esac
     lua /lib/norypt-ghost/imei_generate.lua random
 }
 
@@ -471,13 +528,41 @@ MAC_GEN_CLIENT()  { MAC_GEN clients; }
 # here (RAM) so RANDOMIZE_SSID can broadcast a matching SSID prefix.
 _SESSION_BRAND_FILE=/tmp/norypt-ghost.session_brand
 
-RANDOMIZE_MACADDR() {
+# AP interfaces whose BSSIDs norypt-ghost owns.
+_NG_AP_IFACES="wifi2g wifi5g wifi6g guest2g guest5g guest6g"
+
+# Disable GL-iNet's own BSSID randomization so it never overwrites the
+# coherent BSSIDs we assign. Firmware 4.8.x reads only the per-radio flag;
+# 4.10.x also reads a per-interface flag that takes precedence over it
+# (uci-defaults 03_gl_random-bssid / 04_gl_ramdom-bssid-sync), so both are
+# pinned to 0. Does not commit — callers commit wireless.
+GL_RANDOM_BSSID_OFF() {
     local _radio _iface
+    for _radio in wifi0 wifi1 wifi2; do
+        uci -q get "wireless.${_radio}" >/dev/null 2>&1 && \
+            uci -q set "wireless.${_radio}.random_bssid=0"
+    done
+    for _iface in $_NG_AP_IFACES; do
+        uci -q get "wireless.${_iface}" >/dev/null 2>&1 && \
+            uci -q set "wireless.${_iface}.random_bssid=0"
+    done
+    return 0
+}
+
+# True if any radio or AP interface still has GL-iNet BSSID randomization on.
+GL_RANDOM_BSSID_ON() {
+    local _s
+    for _s in wifi0 wifi1 wifi2 $_NG_AP_IFACES; do
+        [ "$(uci -q get "wireless.${_s}.random_bssid" 2>/dev/null)" = "1" ] && return 0
+    done
+    return 1
+}
+
+RANDOMIZE_MACADDR() {
+    local _iface
     # Disable GL-iNet's BSSID randomization — we own MAC rotation from here.
     # LA bit is forced in MAC_GEN so Qualcomm's channel co-location still works.
-    for _radio in wifi0 wifi1 wifi2; do
-        uci -q set "wireless.${_radio}.random_bssid=0" 2>/dev/null
-    done
+    GL_RANDOM_BSSID_OFF
     # One router identity per rotation: every AP BSSID shares the same vendor
     # OUI (only the NIC bytes differ), like a real consumer router.
     _pick_router_identity
@@ -523,9 +608,12 @@ RANDOMIZE_SSID() {
 
 RANDOMIZE_PASSWORD() {
     # Main (wifi2g/5g/6g) and guest (guest2g/5g/6g) get separate passwords.
+    # 10 random bytes = 20 hex chars = 80 bits: out of reach of offline WPA2
+    # handshake cracking. (PSK length is not observable over the air, so a
+    # long key costs no realism.)
     local _main_pass _guest_pass _iface
-    _main_pass=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n' | tr '[:lower:]' '[:upper:]')
-    _guest_pass=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n' | tr '[:lower:]' '[:upper:]')
+    _main_pass=$(od -An -N10 -tx1 /dev/urandom | tr -d ' \n' | tr '[:lower:]' '[:upper:]')
+    _guest_pass=$(od -An -N10 -tx1 /dev/urandom | tr -d ' \n' | tr '[:lower:]' '[:upper:]')
     for _iface in wifi2g wifi5g wifi6g; do
         uci get "wireless.${_iface}" >/dev/null 2>&1 && \
             uci set "wireless.${_iface}.key=${_main_pass}"
@@ -614,17 +702,19 @@ _render_join_qr() {
         return 0
     fi
 
-    png=/tmp/norypt-ghost-join.png
+    # The PNG encodes the Wi-Fi password: root-only, RAM, deleted after display.
+    png="$(umask 077; mktemp /tmp/norypt-ghost-join.XXXXXX)" || return 0
     # -m 4 quiet zone, sized to fit the 240x320 panel.
-    if qrencode -o "$png" -s 6 -m 4 "$payload" 2>/dev/null; then
+    if ( umask 077; qrencode -o "$png" -s 6 -m 4 "$payload" ) 2>/dev/null; then
         # Free the framebuffer from gl_screen first (same pattern as _screen_splash).
         ubus call service delete '{"name":"gl_screen"}' 2>/dev/null
         /etc/init.d/gl_screen stop >/dev/null 2>&1
         pkill -9 gl_screen 2>/dev/null
         $viewer "$png" >/dev/null 2>&1
-        logger -t norypt-ghost "join QR rendered for SSID $ssid"
+        logger -t norypt-ghost "join QR rendered"
     else
         logger -t norypt-ghost "join QR: qrencode failed — SSID/PSK shown via CLI/LuCI only"
     fi
+    rm -f "$png"
     return 0
 }

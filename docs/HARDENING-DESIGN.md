@@ -68,7 +68,7 @@ folded into it). Each entry is one coherent real-device archetype:
   "imei_tacs": ["<verified Netgear M6 TAC>", "..."],
   "wifi_oui":  ["<real Netgear WLAN OUI>", "..."],
   "ssid_format":         "NETGEAR-{4hex}",
-  "psk_format":          "{10lower}",
+  "psk_format":          "{16lower}",
   "hostname_format":     "Nighthawk-M6",
   "dhcp_hostname_format": "android-{16hex}",
   "bands": ["n2","n5","n25","n41","n66","n71","n77","n78"]

@@ -141,7 +141,7 @@ _abort_model() {
 
 _abort_version() {
     echo ""
-    echo "Norypt Ghost has been tested on GL-E5800 firmware 4.8.3 and 4.8.5 only."
+    echo "Norypt Ghost supports GL-E5800 firmware 4.8.3, 4.8.5 and 4.10.3."
     [ -f /etc/glversion ] && echo "Detected firmware: $(cat /etc/glversion)"
     echo "Newer firmware versions may have changed the AT interface or UCI layout."
     _require_tty
@@ -157,9 +157,10 @@ fi
 if [ -f /etc/glversion ]; then
     GL_VERSION="$(cat /etc/glversion)"
     case "$GL_VERSION" in
-        4.8.3|4.8.5)
+        4.8.3|4.8.5|4.10.3)
                 echo "Firmware $GL_VERSION confirmed supported." ;;
-        4.8.*)  echo "Firmware $GL_VERSION is newer than tested — probably compatible."
+        4.8.*|4.10.*)
+                echo "Firmware $GL_VERSION is not a verified release — probably compatible."
                 _abort_version ;;
         4.*)    echo "Firmware $GL_VERSION has not been tested with Norypt Ghost."
                 _abort_version ;;
@@ -178,9 +179,10 @@ cat > "$CONTROL_DIR/postinst" <<'POSTINST'
 #!/bin/sh
 [ -n "${IPKG_INSTROOT}" ] && exit 0
 
-for _radio in wifi0 wifi1 wifi2; do
-    uci -q set "wireless.${_radio}.random_bssid=0" 2>/dev/null
-done
+# Disable GL-iNet's BSSID randomization (per radio, and per interface on
+# 4.10.x) — norypt-ghost owns MAC rotation.
+. /lib/norypt-ghost/functions.sh
+GL_RANDOM_BSSID_OFF
 uci -q commit wireless
 
 /etc/init.d/norypt-ghost-clean enable
@@ -195,7 +197,10 @@ if [ "$(uci -q get norypt-ghost.options.touch_enabled 2>/dev/null)" != "0" ]; th
     /etc/init.d/norypt-ghost-touch start
 fi
 
-/etc/init.d/norypt-ghost-clean start
+# Apply the no-log state now: client database and vendor log directories to
+# RAM, on-flash logs deleted (with eMMC discard), GoodCloud off.
+. /lib/norypt-ghost/clean.sh
+_with_discard CLEAN_APPLY
 /etc/init.d/norypt-ghost-ttl start
 [ -x /etc/init.d/gl_clients ] && /etc/init.d/gl_clients start 2>/dev/null
 
@@ -235,8 +240,8 @@ cat > "$CONTROL_DIR/postrm" <<'POSTRM'
 #!/bin/sh
 [ -n "${IPKG_INSTROOT}" ] && exit 0
 
-for _radio in wifi0 wifi1 wifi2; do
-    uci -q set "wireless.${_radio}.random_bssid=1" 2>/dev/null
+for _s in wifi0 wifi1 wifi2 wifi2g wifi5g wifi6g guest2g guest5g guest6g; do
+    uci -q get "wireless.${_s}" >/dev/null 2>&1 && uci -q set "wireless.${_s}.random_bssid=1"
 done
 uci -q commit wireless
 
@@ -246,7 +251,8 @@ rm -f /etc/rc.d/S*norypt-ghost* /etc/rc.d/K*norypt-ghost*
 
 rm -f /etc/norypt-ghost.last_imei_rotate \
       /etc/norypt-ghost.last_wireless_rotate \
-      /etc/norypt-ghost.sim-swap-pending
+      /etc/norypt-ghost.sim-swap-pending \
+      /etc/norypt-ghost.identity-pending
 
 echo "norypt-ghost: uninstalled."
 exit 0
