@@ -316,6 +316,7 @@ Commands:
                    "Keep Settings" backup cannot carry it onto the new firmware's flash
   forget-sims      Forget every SIM that is not inserted (GL per-SIM settings, APN history)
   wipe-logs        Delete on-flash vendor/system logs now and move log directories to RAM
+  wipe-sms         Delete every stored SMS now (inbox, sent, drafts, queue, SIM/modem stores)
   help             Show this help
 
 Mode options (rotate / sim-swap):
@@ -339,6 +340,7 @@ case "$_slot1_mode" in random|deterministic|static) ;; *) _slot1_mode="random" ;
 _slot2_mode=$(uci -q get norypt-ghost.options.imei_mode_slot2 2>/dev/null)
 case "$_slot2_mode" in random|deterministic|static) ;; *) _slot2_mode="random" ;; esac
 _reboot=0
+_scheduled=0
 
 for _arg in "$@"; do
     case "$_arg" in
@@ -348,6 +350,7 @@ for _arg in "$@"; do
         --slot1=*)       _slot1_mode="${_arg#--slot1=}" ;;
         --slot2=*)       _slot2_mode="${_arg#--slot2=}" ;;
         --reboot)        _reboot=1 ;;
+        --scheduled)     _scheduled=1 ;;
         --help)          cmd="help" ;;
         --*)             echo "norypt-ghost: unknown option '$_arg'" >&2; exit 1 ;;
     esac
@@ -373,7 +376,7 @@ done
 # found dead.
 _NG_LOCK=/tmp/norypt-ghost.lock.d
 case "$cmd" in
-    rotate|rotate-wireless|new-identity|sim-swap|prepare-upgrade|forget-sims|wipe-logs)
+    rotate|rotate-wireless|new-identity|sim-swap|prepare-upgrade|forget-sims|wipe-logs|wipe-sms)
         if ! mkdir "$_NG_LOCK" 2>/dev/null; then
             _ng_owner="$(cat "$_NG_LOCK/pid" 2>/dev/null)"
             if [ -n "$_ng_owner" ] && kill -0 "$_ng_owner" 2>/dev/null; then
@@ -400,6 +403,10 @@ case "$cmd" in
         # Identity changes on demand only — never per boot.
         uci -c /etc/config set norypt-ghost.options.randomize_on_boot=0
         uci -c /etc/config commit norypt-ghost
+        # Weekly SMS wipe (the job honours the sms_wipe option, default on).
+        # shellcheck source=/dev/null
+        . /lib/norypt-ghost/clean.sh
+        SMS_CRON_INSTALL
         echo "norypt-ghost: setup complete (no-retention model)."
         echo "  Change identity on demand: norypt-ghost new-identity  (or the on-screen menu)."
         ;;
@@ -438,11 +445,18 @@ case "$cmd" in
         # The new IMEIs are already in the modem (written before the reboot).
         _emit_rotate_display "$_ni_old1" "$_ni_old2" "$(READ_IMEI)" "$(READ_IMEI_SLOT2)"
         unset _ni_old1 _ni_old2
+        # Fresh start: nothing of the old identity survives except settings.
+        # shellcheck source=/dev/null
+        . /lib/norypt-ghost/clean.sh
+        # Stored SMS record the old IMEI/IMSI in their headers.
+        if _opt_enabled sms_wipe; then
+            echo "  SMS wiped: $(SMS_WIPE) message(s)."
+        fi
+        _with_discard IDENTITY_SCRUB
+        echo "  Logs and history wiped (settings kept)."
         # Forget every SIM except the one(s) inserted (GL per-SIM settings are
         # keyed by ICCID). Last modem step: the cellular manager stays stopped
         # until the reboot.
-        # shellcheck source=/dev/null
-        . /lib/norypt-ghost/clean.sh
         SIM_FORGET keep norestart >/dev/null
         echo "norypt-ghost: rebooting in 5s to apply the new identity cleanly."
         echo "  Rejoin Wi-Fi with the SSID/password above (also on GL's Wi-Fi screen page)."
@@ -497,6 +511,11 @@ case "$cmd" in
         # Forget the outgoing SIM: GL keeps per-SIM settings keyed by ICCID.
         # shellcheck source=/dev/null
         . /lib/norypt-ghost/clean.sh
+        if _opt_enabled sms_wipe; then
+            echo "  SMS wiped: $(SMS_WIPE) message(s)."
+        fi
+        _with_discard IDENTITY_SCRUB
+        echo "  Logs and history wiped (settings kept)."
         SIM_FORGET all norestart >/dev/null
         echo "  Outgoing SIM forgotten (GL per-SIM settings and APN history)."
 
@@ -529,6 +548,17 @@ case "$cmd" in
         echo "norypt-ghost: forgetting SIMs that are not inserted (cellular restarts briefly)..."
         _fs_n="$(SIM_FORGET keep)"
         echo "  Removed $_fs_n entr(y/ies) from GL's per-SIM settings and APN history."
+        ;;
+
+    wipe-sms)
+        # shellcheck source=/dev/null
+        . /lib/norypt-ghost/clean.sh
+        if [ "$_scheduled" = 1 ] && ! _opt_enabled sms_wipe; then
+            exit 0
+        fi
+        _ws_n="$(_with_discard SMS_WIPE)"
+        logger -t norypt-ghost "sms wipe: ${_ws_n} message(s) removed"
+        echo "norypt-ghost: ${_ws_n} SMS removed (inbox, sent, drafts, queue; SIM and modem stores emptied)."
         ;;
 
     wipe-logs)

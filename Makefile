@@ -242,6 +242,13 @@ uci -q commit wireless
 # sweep any rc.d symlinks left behind so nothing dangles.
 rm -f /etc/rc.d/S*norypt-ghost* /etc/rc.d/K*norypt-ghost*
 
+# Remove the weekly SMS wipe job.
+if [ -f /etc/crontabs/root ] && grep -q "norypt-ghost: weekly SMS wipe" /etc/crontabs/root; then
+    grep -v "norypt-ghost: weekly SMS wipe" /etc/crontabs/root > /tmp/.ng_ct
+    cat /tmp/.ng_ct > /etc/crontabs/root; rm -f /tmp/.ng_ct
+    /etc/init.d/cron restart >/dev/null 2>&1
+fi
+
 # Clean up runtime state files.
 rm -f /etc/norypt-ghost.last_imei_rotate \
       /etc/norypt-ghost.last_wireless_rotate \

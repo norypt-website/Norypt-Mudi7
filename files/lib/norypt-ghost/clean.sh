@@ -163,6 +163,87 @@ CLOUD_BLOCK() {
     return 0
 }
 
+# GL's eSIM client (LPA) sends the eSIM slot's IMEI to the eSIM provider's
+# server. Off and not started at boot (option block_esim, default on).
+# Without it, eSIM profiles cannot be downloaded or switched.
+ESIM_BLOCK() {
+    _opt_enabled block_esim || return 0
+    [ -x /etc/init.d/esim_lpa ] || return 0
+    /etc/init.d/esim_lpa enabled 2>/dev/null && /etc/init.d/esim_lpa disable >/dev/null 2>&1
+    _esim_running && /etc/init.d/esim_lpa stop >/dev/null 2>&1
+    return 0
+}
+
+_esim_running() { pgrep '^lpa_' >/dev/null 2>&1; }
+
+# GL stores every SMS (inbox, sent, drafts, queue) as one file under
+# /etc/spool/sms, and each file's header records the device IMEI and the SIM
+# IMSI at that moment — so old messages bridge old and new identities.
+_SMS_SPOOL=/etc/spool/sms
+_SMS_DIRS="incoming storage sent outgoing checked failed"
+_SMS_CRON_TAG="# norypt-ghost: weekly SMS wipe"
+_SMS_CRON_LINE="0 4 * * 0 /usr/bin/norypt-ghost wipe-sms --scheduled $_SMS_CRON_TAG"
+
+_sms_count() {
+    local d n=0 f
+    for d in $_SMS_DIRS; do
+        for f in "$_SMS_SPOOL/$d"/* "$_SMS_SPOOL/$d"/.[!.]*; do [ -f "$f" ] && n=$((n + 1)); done
+    done
+    echo "$n"
+}
+
+# Empty one modem message store ($1 = SM for the SIM card, ME for the modem).
+_sms_clear_store() {
+    _at "AT+CPMS=\"$1\",\"$1\",\"$1\"" 2>/dev/null | grep -q '+CPMS' || return 0
+    _at 'AT+CMGD=1,4' >/dev/null 2>&1
+}
+
+# Delete every stored SMS: each file is overwritten with zeros, then unlinked
+# (callers wrap this in _with_discard so the eMMC is told the blocks are free;
+# an overwrite alone is not a guaranteed erase on flash). Also empties the SIM
+# and modem message stores. GL's SMS services are stopped meanwhile so nothing
+# is half-written. Prints the number of messages removed — never content.
+SMS_WIPE() {
+    local d f n=0 sz s
+    for s in sms_manager smstools3; do
+        [ -x "/etc/init.d/$s" ] && "/etc/init.d/$s" stop >/dev/null 2>&1
+    done
+    for d in $_SMS_DIRS; do
+        [ -d "$_SMS_SPOOL/$d" ] || continue
+        for f in "$_SMS_SPOOL/$d"/* "$_SMS_SPOOL/$d"/.[!.]*; do
+            [ -f "$f" ] || continue
+            sz="$(wc -c < "$f" 2>/dev/null)"
+            [ "${sz:-0}" -gt 0 ] && dd if=/dev/zero of="$f" bs="$sz" count=1 conv=notrunc 2>/dev/null
+            rm -f "$f" && n=$((n + 1))
+        done
+    done
+    sync
+    _sms_clear_store SM
+    _sms_clear_store ME
+    _at 'AT+CPMS="ME","ME","ME"' >/dev/null 2>&1   # GL's own setting
+    for s in smstools3 sms_manager; do
+        [ -x "/etc/init.d/$s" ] && "/etc/init.d/$s" enabled 2>/dev/null && "/etc/init.d/$s" start >/dev/null 2>&1
+    done
+    echo "$n"
+}
+
+# Weekly schedule (Sunday 04:00 router time). The job itself honours the
+# sms_wipe option, so toggling it needs no crontab edit.
+SMS_CRON_INSTALL() {
+    local ct=/etc/crontabs/root
+    mkdir -p /etc/crontabs
+    grep -qF "$_SMS_CRON_TAG" "$ct" 2>/dev/null && return 0
+    echo "$_SMS_CRON_LINE" >> "$ct"
+    /etc/init.d/cron restart >/dev/null 2>&1
+}
+
+SMS_CRON_REMOVE() {
+    local ct=/etc/crontabs/root
+    [ -f "$ct" ] && grep -qF "$_SMS_CRON_TAG" "$ct" || return 0
+    grep -vF "$_SMS_CRON_TAG" "$ct" > "$ct.ng_tmp"; cat "$ct.ng_tmp" > "$ct"; rm -f "$ct.ng_tmp"
+    /etc/init.d/cron restart >/dev/null 2>&1
+}
+
 # ICCIDs of the SIM(s) GL currently has configured (network.*.iccid), F-less.
 _current_iccids() {
     uci -q show network 2>/dev/null | sed -n "s/^network\.[^.]*\.iccid='\(.*\)'$/\1/p" \
@@ -299,8 +380,9 @@ CLEAN_APPLY() {
     _wifi_logs_off
     _ipa_debug_off
     _nginx_log_off
-    # 8. GoodCloud remote management off.
+    # 8. GoodCloud remote management and the eSIM client off.
     CLOUD_BLOCK
+    ESIM_BLOCK
     # 9. Sweep any legacy flash-persisted rotation timestamps. Older builds wrote
     #    these to /etc; the no-log model keeps them in RAM (/tmp) only, so any
     #    /etc copy is a forensic trace of when the identity last changed.
@@ -325,6 +407,19 @@ SIM_FORGET() {
     echo "${n:-0}"
 }
 
+# Fresh start for a new identity: every log, record and cache the device keeps
+# is removed; settings (VPN, Wi-Fi, firewall, current SIM's APN, passwords)
+# are untouched. RAM state (syslog, leases, ARP, client list) goes with the
+# reboot that follows. Wrap in _with_discard.
+IDENTITY_SCRUB() {
+    CLEAN_APPLY >/dev/null 2>&1        # flash logs deleted, log dirs on RAM
+    CLEAN_WIPE                         # RAM-backed history emptied now
+    rm -f /root/.ash_history /root/.bash_history /root/.lua_history 2>/dev/null
+    [ -d /data/tombstones ] && find /data/tombstones -type f -exec rm -f {} \; 2>/dev/null
+    rm -f "$_FLOW_DB" /etc/netifyd/qos_stats /etc/netifyd/content_protection_stats 2>/dev/null
+    return 0
+}
+
 # Pre-firmware-upgrade wipe. GL-iNet's "Keep Settings" upgrade copies every
 # path in /lib/upgrade/keep.d from the RUNNING system — including
 # /etc/oui-tertf/client.db, /etc/gl_modem_traffic/ and the DPI databases — so
@@ -339,6 +434,7 @@ CLEAN_PREPARE_UPGRADE() {
           /etc/netifyd/qos_stats /etc/netifyd/content_protection_stats 2>/dev/null
     _nginx_log_off
     SIM_FORGET keep norestart >/dev/null
+    _opt_enabled sms_wipe && SMS_WIPE >/dev/null
 }
 
 CLEAN_STATUS() {
@@ -424,6 +520,27 @@ CLEAN_STATUS() {
         fi
     else
         _st_pass "GoodCloud remote management off"
+    fi
+    v="$(_sms_count)"
+    if _opt_enabled sms_wipe; then
+        if grep -qF "$_SMS_CRON_TAG" /etc/crontabs/root 2>/dev/null; then
+            _st_pass "weekly SMS wipe scheduled ($v stored now)"
+        else
+            _st_fail "weekly SMS wipe not scheduled — run: norypt-ghost install"
+        fi
+    elif [ "$v" -gt 0 ]; then
+        _st_warn "$v SMS stored with IMEI/IMSI headers (sms_wipe=0) — run: norypt-ghost wipe-sms"
+    fi
+    if [ -x /etc/init.d/esim_lpa ]; then
+        if _esim_running || /etc/init.d/esim_lpa enabled 2>/dev/null; then
+            if _opt_enabled block_esim; then
+                _st_fail "eSIM client on (sends the IMEI to the eSIM provider)"
+            else
+                _st_warn "eSIM client on (block_esim=0) — sends the IMEI to the eSIM provider"
+            fi
+        else
+            _st_pass "eSIM client off"
+        fi
     fi
     if [ -e /etc/norypt-ghost.last_imei_rotate ] || [ -e /etc/norypt-ghost.last_wireless_rotate ]; then
         _st_fail "rotation timestamps on flash"

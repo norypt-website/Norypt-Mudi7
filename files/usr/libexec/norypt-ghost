@@ -36,10 +36,14 @@ case "$1" in
         _opt_rat_lock=$(uci -q get norypt-ghost.options.rat_lock 2>/dev/null)
         _opt_default_region=$(uci -q get norypt-ghost.options.default_region 2>/dev/null)
         _opt_block_cloud=$(uci -q get norypt-ghost.options.block_cloud 2>/dev/null)
+        _opt_block_esim=$(uci -q get norypt-ghost.options.block_esim 2>/dev/null)
+        _opt_sms_wipe=$(uci -q get norypt-ghost.options.sms_wipe 2>/dev/null)
+        # shellcheck source=/dev/null
+        _sms_n=$( . /lib/norypt-ghost/clean.sh; _sms_count )
         _last_imei_rotate=$(cat /tmp/norypt-ghost.last_imei_rotate 2>/dev/null)
         _last_wireless_rotate=$(cat /tmp/norypt-ghost.last_wireless_rotate 2>/dev/null)
         _touch_enabled=$([ -n "$(ls /etc/rc.d/S*norypt-ghost-touch 2>/dev/null)" ] && printf '1' || printf '0')
-        printf '{"imei1":"%s","imei2":"%s","ssid":"%s","guest_ssid":"%s","mac_2g":"%s","mac_5g":"%s","mac_6g":"%s","mac_sta":"%s","mac_guest2g":"%s","mac_guest5g":"%s","mac_guest6g":"%s","hostname":"%s","wifi2g_key":"%s","guest2g_key":"%s","opt_mac":"%s","opt_ssid":"%s","opt_hostname":"%s","opt_password":"%s","opt_boot":"%s","imei_mode_slot1":"%s","imei_mode_slot2":"%s","static_imei_slot1":"%s","static_imei_slot2":"%s","register_timeout":"%s","rat_lock":"%s","default_region":"%s","last_imei_rotate":"%s","last_wireless_rotate":"%s","touch_enabled":"%s","block_cloud":"%s"}\n' \
+        printf '{"imei1":"%s","imei2":"%s","ssid":"%s","guest_ssid":"%s","mac_2g":"%s","mac_5g":"%s","mac_6g":"%s","mac_sta":"%s","mac_guest2g":"%s","mac_guest5g":"%s","mac_guest6g":"%s","hostname":"%s","wifi2g_key":"%s","guest2g_key":"%s","opt_mac":"%s","opt_ssid":"%s","opt_hostname":"%s","opt_password":"%s","opt_boot":"%s","imei_mode_slot1":"%s","imei_mode_slot2":"%s","static_imei_slot1":"%s","static_imei_slot2":"%s","register_timeout":"%s","rat_lock":"%s","default_region":"%s","last_imei_rotate":"%s","last_wireless_rotate":"%s","touch_enabled":"%s","block_cloud":"%s","block_esim":"%s","sms_wipe":"%s","sms_count":"%s"}\n' \
             "${_imei1:----}" "${_imei2:----}" \
             "$(_js "${_ssid:----}")" "$(_js "${_gssid:----}")" \
             "${_mac2g:----}" "${_mac5g:----}" "${_mac6g:----}" "${_macsta:----}" \
@@ -54,7 +58,7 @@ case "$1" in
             "${_opt_rat_lock:-1}" "${_opt_default_region:-NA}" \
             "$(_js "${_last_imei_rotate}")" \
             "$(_js "${_last_wireless_rotate}")" \
-            "$_touch_enabled" "${_opt_block_cloud:-1}"
+            "$_touch_enabled" "${_opt_block_cloud:-1}" "${_opt_block_esim:-1}" "${_opt_sms_wipe:-1}" "${_sms_n:-0}"
         ;;
     new_identity)
         # Full rotation (IMEIs + wireless/system + RAT/region) — the CLI
@@ -62,6 +66,10 @@ case "$1" in
         ( umask 077; : > /tmp/norypt-ghost.log )
         /usr/bin/norypt-ghost new-identity >> /tmp/norypt-ghost.log 2>&1 &
         printf '{"started":true}\n'
+        ;;
+    wipe_sms)
+        _n=$(/usr/bin/norypt-ghost wipe-sms 2>/dev/null | sed -n 's/^norypt-ghost: \([0-9]*\) SMS removed.*/\1/p')
+        if [ -n "$_n" ]; then printf '{"removed":%s}\n' "$_n"; else printf '{"error":"SMS wipe failed or another operation is running"}\n'; exit 1; fi
         ;;
     rotate)
         ( umask 077; : > /tmp/norypt-ghost.log )
@@ -134,7 +142,7 @@ case "$1" in
                     printf '{"error":"timeout must be 10-600 seconds"}\n'; exit 1
                 fi
                 ;;
-            rat_lock|block_cloud)
+            rat_lock|block_cloud|block_esim|sms_wipe)
                 case "$_val" in
                     0|1) ;;
                     *) printf '{"error":"value must be 0 or 1"}\n'; exit 1 ;;
@@ -156,6 +164,17 @@ case "$1" in
             # shellcheck source=/dev/null
             . /lib/norypt-ghost/clean.sh
             CLOUD_BLOCK
+        fi
+        if [ "$_key" = "block_esim" ]; then
+            uci -q set "norypt-ghost.options.block_esim=$_val"; uci -q commit norypt-ghost
+            if [ "$_val" = "1" ]; then
+                # shellcheck source=/dev/null
+                . /lib/norypt-ghost/clean.sh
+                ESIM_BLOCK
+            elif [ -x /etc/init.d/esim_lpa ]; then
+                /etc/init.d/esim_lpa enable 2>/dev/null
+                /etc/init.d/esim_lpa start 2>/dev/null
+            fi
         fi
         if [ "$_key" = "touch_enabled" ]; then
             if [ "$_val" = "1" ]; then

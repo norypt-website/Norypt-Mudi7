@@ -447,6 +447,36 @@ return view.extend({
                 E('div', { 'style': 'color:var(--text-color-medium);font-size:.82em;margin-bottom:14px;padding-left:1.5em' }, [
                     'Turns GL-iNet GoodCloud and its remote terminal off at every boot. Untick to manage the router from GoodCloud.'
                 ]),
+                E('div', { 'style': 'margin-bottom:4px' }, [
+                    checkbox('Wipe all SMS every week and on every identity change', 'sms_wipe', st.sms_wipe !== '0', securitySavedEl)
+                ]),
+                E('div', { 'style': 'color:var(--text-color-medium);font-size:.82em;margin-bottom:6px;padding-left:1.5em' }, [
+                    'GL stores every SMS on flash with the IMEI and IMSI of that moment. Inbox, sent, drafts and the send queue are deleted every Sunday at 04:00, on New Identity and on SIM Swap. Stored now: ',
+                    E('span', { 'id': 'ng-sms-count', 'style': 'font-family:monospace' }, [ st.sms_count || '0' ])
+                ]),
+                E('div', { 'style': 'margin-bottom:14px;padding-left:1.5em' }, [
+                    E('button', {
+                        'class': 'btn cbi-button-remove',
+                        'click': function(ev) {
+                            if (!window.confirm('Delete every stored SMS now (inbox, sent, drafts, queue)?\n\nThis cannot be undone.'))
+                                return;
+                            var btn = ev.target; btn.disabled = true;
+                            exec('wipe_sms').then(function(out) {
+                                var r = {}; try { r = JSON.parse(out); } catch (e) {}
+                                var el = document.getElementById('ng-sms-count'); if (el) el.textContent = '0';
+                                showNotice((r.removed != null ? r.removed : '?') + ' SMS deleted.', false);
+                            }).catch(function(e) {
+                                showNotice('Error: ' + e.message, true);
+                            }).then(function() { btn.disabled = false; });
+                        }
+                    }, [ 'Wipe all SMS now' ])
+                ]),
+                E('div', { 'style': 'margin-bottom:4px' }, [
+                    checkbox('Keep the eSIM client off', 'block_esim', st.block_esim !== '0', securitySavedEl)
+                ]),
+                E('div', { 'style': 'color:var(--text-color-medium);font-size:.82em;margin-bottom:14px;padding-left:1.5em' }, [
+                    'GL-iNet\'s eSIM client sends the eSIM slot\'s IMEI to the eSIM provider. Off at every boot; untick to download or switch eSIM profiles.'
+                ]),
 
                 E('div', { 'style': 'font-size:.85em;font-weight:600;color:var(--text-color-high);border-bottom:1px solid var(--border-color-high);padding-bottom:3px;margin-bottom:8px' }, [ 'Default Region' ]),
                 E('div', { 'style': 'display:flex;align-items:center;margin-bottom:14px' }, [
