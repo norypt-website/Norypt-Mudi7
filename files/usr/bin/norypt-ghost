@@ -101,20 +101,28 @@ _run_check() {
     else
         _fail "modem not responding to AT commands"
     fi
+    # Identifiers are never printed here: check output is meant to be safe to
+    # paste into a bug report or a chat.
     local _imei
     _imei=$(READ_IMEI)
-    if [ -n "$_imei" ]; then
-        _pass "IMEI readable (slot 1: $_imei)"
+    if IMEI_VALID "$_imei"; then
+        _pass "slot 1 IMEI readable and Luhn-valid"
     else
-        _fail "cannot read IMEI via AT+EGMR"
+        _fail "cannot read a valid slot 1 IMEI via AT+EGMR"
+    fi
+    _imei=$(READ_IMEI_SLOT2)
+    if IMEI_VALID "$_imei"; then
+        _pass "slot 2/eSIM IMEI readable and Luhn-valid"
+    else
+        _fail "cannot read a valid slot 2/eSIM IMEI via AT+EGMR"
     fi
 
     echo ""
     echo "IMEI generator:"
     local _gen
     _gen=$(GENERATE_IMEI 2>/dev/null)
-    if [ ${#_gen} -eq 15 ]; then
-        _pass "lua generator produces valid IMEIs (sample: $_gen)"
+    if IMEI_VALID "$_gen"; then
+        _pass "generator produces Luhn-valid IMEIs on catalog TACs"
     else
         _fail "lua generator broken — check lua and luabitop packages"
     fi
@@ -167,12 +175,26 @@ _run_check() {
     fi
     # shellcheck source=/dev/null
     . /lib/norypt-ghost/clean.sh
+    echo ""
+    echo "Wireless identity:"
+    if GL_RANDOM_BSSID_ON; then
+        _fail "GL-iNet BSSID randomization enabled — it will overwrite the coherent BSSIDs (run: norypt-ghost install)"
+    else
+        _pass "GL-iNet BSSID randomization off (radios and interfaces)"
+    fi
+
+    echo ""
+    echo "No-log:"
     CLEAN_STATUS || _CHECK_FAILS=$((_CHECK_FAILS + 1))
 
     echo ""
     echo "State:"
+    echo "  INFO  firmware $(cat /etc/glversion 2>/dev/null || echo unknown)"
     if [ -f /etc/norypt-ghost.sim-swap-pending ]; then
         _warn "sim-swap Stage 2 pending — completes on next boot"
+    fi
+    if [ -f /etc/norypt-ghost.identity-pending ]; then
+        _warn "new-identity boot verification pending — completes on next boot"
     fi
 
     echo ""
@@ -242,12 +264,13 @@ _rotate() {
     echo "  Slot 1 IMEI: $imei1"
     echo "  Slot 2 IMEI: $imei2"
 
-    SET_IMEIS "$imei1" "$imei2" || {
-        echo "norypt-ghost: IMEI write failed — RF left disabled" >&2
+    if ! SET_IMEIS "$imei1" "$imei2" || ! VERIFY_IMEIS "$imei1" "$imei2"; then
+        echo "norypt-ghost: IMEI write/verify failed — RF left disabled" >&2
         _recovery_hint
         _screen_fail
         return 1
-    }
+    fi
+    RAT_LOCK_APPLY >/dev/null 2>&1
 
     date '+%Y-%m-%d %H:%M (manual)' > /tmp/norypt-ghost.last_imei_rotate
 
@@ -289,6 +312,10 @@ Commands:
   rotate-wireless  Rotate MACs/SSIDs/hostname/password now (respects option flags) (partial, live — NOT a clean break; use new-identity for unlinkability)
   new-identity     Full clean rotation: new profile, every identifier, reboot (recommended)
   sim-swap         Disable RF, write throwaway IMEIs, poweroff; Stage 2 (final IMEI write) runs on next boot
+  prepare-upgrade  Run right before a firmware upgrade: wipe RAM-only history so the
+                   "Keep Settings" backup cannot carry it onto the new firmware's flash
+  forget-sims      Forget every SIM that is not inserted (GL per-SIM settings, APN history)
+  wipe-logs        Delete on-flash vendor/system logs now and move log directories to RAM
   help             Show this help
 
 Mode options (rotate / sim-swap):
@@ -337,6 +364,31 @@ for _mode in "$_slot1_mode" "$_slot2_mode"; do
     esac
 done
 
+# ── Mutual exclusion ─────────────────────────────────────────────────────────
+# One identity-changing operation at a time, across CLI, LuCI and the touch
+# menu: a second rotation's CFUN=1 could otherwise re-enable RF while the first
+# is mid-write and transmit a half-rotated identity. A PID-stamped directory in
+# RAM (atomic mkdir; no file descriptor for restarted daemons to inherit), freed
+# on exit, by the reboot/poweroff that ends the operation, or when its owner is
+# found dead.
+_NG_LOCK=/tmp/norypt-ghost.lock.d
+case "$cmd" in
+    rotate|rotate-wireless|new-identity|sim-swap|prepare-upgrade|forget-sims|wipe-logs)
+        if ! mkdir "$_NG_LOCK" 2>/dev/null; then
+            _ng_owner="$(cat "$_NG_LOCK/pid" 2>/dev/null)"
+            if [ -n "$_ng_owner" ] && kill -0 "$_ng_owner" 2>/dev/null; then
+                echo "norypt-ghost: another operation is in progress — try again when it finishes" >&2
+                exit 1
+            fi
+            rm -rf "$_NG_LOCK"
+            mkdir "$_NG_LOCK" 2>/dev/null || { echo "norypt-ghost: cannot take operation lock" >&2; exit 1; }
+        fi
+        echo "$$" > "$_NG_LOCK/pid"
+        trap 'rm -rf "$_NG_LOCK"' EXIT
+        trap 'exit 1' INT TERM HUP
+        ;;
+esac
+
 # ── Commands ─────────────────────────────────────────────────────────────────
 
 case "$cmd" in
@@ -374,20 +426,26 @@ case "$cmd" in
         echo "norypt-ghost: staging new device identity..."
         _screen_splash rotating
         _id="$(IDENTITY_STAGE)" || { echo "staging failed" >&2; _screen_fail; exit 1; }
-        echo "  Profile: $_id"
-        echo "  SSID:    $(uci -q get wireless.wifi2g.ssid)"
+        echo "  Profile:  $_id"
+        echo "  SSID:     $(uci -q get wireless.wifi2g.ssid)"
+        # Console only (never logged): the user needs it to rejoin after the
+        # reboot, and the QR below needs qrencode + an fb viewer to appear.
+        echo "  Password: $(uci -q get wireless.wifi2g.key)"
         # QR on the framebuffer if available (Task C1); text otherwise.
         if command -v _render_join_qr >/dev/null 2>&1; then
             _render_join_qr "$(uci -q get wireless.wifi2g.ssid)" "$(uci -q get wireless.wifi2g.key)"
         fi
-        _ni_new1=""; _ni_new2=""
-        if [ -f /etc/norypt-ghost.identity-pending ]; then
-            _ni_new1="$(sed -n 's/^STAGED_IMEI1=//p' /etc/norypt-ghost.identity-pending)"
-            _ni_new2="$(sed -n 's/^STAGED_IMEI2=//p' /etc/norypt-ghost.identity-pending)"
-        fi
-        _emit_rotate_display "$_ni_old1" "$_ni_old2" "$_ni_new1" "$_ni_new2"
+        # The new IMEIs are already in the modem (written before the reboot).
+        _emit_rotate_display "$_ni_old1" "$_ni_old2" "$(READ_IMEI)" "$(READ_IMEI_SLOT2)"
+        unset _ni_old1 _ni_old2
+        # Forget every SIM except the one(s) inserted (GL per-SIM settings are
+        # keyed by ICCID). Last modem step: the cellular manager stays stopped
+        # until the reboot.
+        # shellcheck source=/dev/null
+        . /lib/norypt-ghost/clean.sh
+        SIM_FORGET keep norestart >/dev/null
         echo "norypt-ghost: rebooting in 5s to apply the new identity cleanly."
-        echo "  Scan the QR on the device screen to rejoin Wi-Fi."
+        echo "  Rejoin Wi-Fi with the SSID/password above (also on GL's Wi-Fi screen page)."
         sleep 5
         /sbin/reboot
         ;;
@@ -403,16 +461,6 @@ case "$cmd" in
         # Removed explicitly on every interactive failure path below.
         _SS_STAGE=/tmp/norypt-ghost-sim-swap.stage
         : > "$_SS_STAGE"
-
-        _ss_old_imei1=$(READ_IMEI)
-        _ss_old_imei2=$(READ_IMEI_SLOT2)
-        _ss_old_imsi1=$(READ_IMSI_SLOT1 2>/dev/null)
-        _ss_old_imsi2=$(READ_IMSI_SLOT2 2>/dev/null)
-
-        echo "Current state:"
-        echo "  Slot 1 — IMEI: $_ss_old_imei1  IMSI: ${_ss_old_imsi1:-[none]}"
-        echo "  Slot 2 — IMEI: $_ss_old_imei2  IMSI: ${_ss_old_imsi2:-[none]}"
-        echo ""
 
         # Disable RF — no old IMEI transmission during the transition window.
         _screen_msg "SIM swap: disabling RF..."
@@ -437,14 +485,20 @@ case "$cmd" in
             exit 1
         }
 
-        echo "  Slot 1 throwaway: $_ss_pre_imei1"
-        echo "  Slot 2 throwaway: $_ss_pre_imei2"
+        echo "  Throwaway IMEIs written to both slots."
 
         # Save state for Stage 2 — completed automatically on next boot.
-        printf 'SLOT1_MODE=%s\nSLOT2_MODE=%s\nOLD_IMSI1=%s\nOLD_IMSI2=%s\n' \
-            "$_slot1_mode" "$_slot2_mode" \
-            "${_ss_old_imsi1}" "${_ss_old_imsi2}" \
-            > /etc/norypt-ghost.sim-swap-pending
+        # Only the IMEI modes: no IMEI, IMSI or ICCID of the outgoing SIM is
+        # ever written to flash (it would bridge the old and new identities).
+        ( umask 077
+          printf 'SLOT1_MODE=%s\nSLOT2_MODE=%s\n' "$_slot1_mode" "$_slot2_mode" \
+              > /etc/norypt-ghost.sim-swap-pending )
+
+        # Forget the outgoing SIM: GL keeps per-SIM settings keyed by ICCID.
+        # shellcheck source=/dev/null
+        . /lib/norypt-ghost/clean.sh
+        SIM_FORGET all norestart >/dev/null
+        echo "  Outgoing SIM forgotten (GL per-SIM settings and APN history)."
 
         echo ""
         _screen_msg "SIM swap: powering off in 5s."
@@ -454,6 +508,36 @@ case "$cmd" in
         _screen_splash simswap
         sleep 5
         /sbin/poweroff
+        ;;
+
+    prepare-upgrade)
+        if [ -f /etc/norypt-ghost.identity-pending ] || [ -f /etc/norypt-ghost.sim-swap-pending ]; then
+            echo "norypt-ghost: a new-identity/sim-swap is still pending — reboot once to finish it, then upgrade." >&2
+            exit 1
+        fi
+        # shellcheck source=/dev/null
+        . /lib/norypt-ghost/clean.sh
+        _with_discard CLEAN_PREPARE_UPGRADE
+        echo "norypt-ghost: connected-device history wiped; unused SIMs forgotten; client tracking stopped."
+        echo "  Upgrade NOW with \"Keep Settings\" ticked — do not reboot first (a reboot"
+        echo "  restarts tracking). Reinstall norypt-ghost right after the upgrade."
+        ;;
+
+    forget-sims)
+        # shellcheck source=/dev/null
+        . /lib/norypt-ghost/clean.sh
+        echo "norypt-ghost: forgetting SIMs that are not inserted (cellular restarts briefly)..."
+        _fs_n="$(SIM_FORGET keep)"
+        echo "  Removed $_fs_n entr(y/ies) from GL's per-SIM settings and APN history."
+        ;;
+
+    wipe-logs)
+        # shellcheck source=/dev/null
+        . /lib/norypt-ghost/clean.sh
+        echo "norypt-ghost: deleting on-flash logs and moving log directories to RAM..."
+        _with_discard CLEAN_APPLY
+        echo "  Done. Run 'norypt-ghost check' — then reboot so every daemon reopens its"
+        echo "  log in RAM (files still held open are freed at the reboot)."
         ;;
 
     help|-h)

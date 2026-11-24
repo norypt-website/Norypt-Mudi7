@@ -218,7 +218,7 @@ Seed with ≥3 NA + ≥3 EU profiles across both classes. TACs carry `verified:f
       "wifi_oui": ["A0:63:91", "C0:3F:0E", "20:E5:2A"],
       "client_oui": ["3C:22:FB", "88:66:5A"],
       "ssid_format": "NETGEAR-{4hex}",
-      "psk_format": "{10lower}",
+      "psk_format": "{16lower}",
       "hostname_format": "Nighthawk-M6",
       "dhcp_hostname_format": "android-{16hex}",
       "bands": ["n2","n5","n25","n41","n66","n71","n77","n78"],

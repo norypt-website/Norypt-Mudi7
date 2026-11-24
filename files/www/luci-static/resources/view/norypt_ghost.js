@@ -225,7 +225,7 @@ return view.extend({
 
         // ── Static IMEI inputs ────────────────────────────────────────────────
 
-        function makeImeiInput(slotLabel, key, savedVal, liveImei) {
+        function makeImeiInput(slotLabel, key, savedVal) {
             var errEl = E('span', { 'style': 'color:#c00;font-size:.85em;margin-left:8px;display:none' });
             var inp = E('input', {
                 'type': 'text',
@@ -267,30 +267,21 @@ return view.extend({
                     .catch(function(e) { console.error('save static IMEI failed:', e.message); });
             });
 
-            var useBtn = E('button', {
-                'class': 'btn',
-                'style': 'margin-left:8px;padding:2px 8px;font-size:.8em',
-                'title': 'Copy current live IMEI into this field',
-                'click': function() {
-                    inp.value = liveImei || '';
-                    inp.dispatchEvent(new Event('input'));
-                    inp.dispatchEvent(new Event('blur'));
-                }
-            }, [ 'Use current' ]);
-
+            // No "use current IMEI" shortcut: copying the live IMEI into UCI
+            // would persist the (possibly factory) identity to flash, which
+            // the no-retention model forbids. Static values are typed by hand.
             return E('div', { 'style': 'display:flex;align-items:center;margin-bottom:6px' }, [
                 E('span', { 'style': 'width:120px;font-weight:bold' }, [ slotLabel ]),
                 inp,
-                useBtn,
                 errEl
             ]);
         }
 
         var staticSlot1El = E('div', { 'style': 'display:' + (mode1 === 'static' ? '' : 'none') }, [
-            makeImeiInput('SIM Slot 1',      'static_imei_slot1', st.static_imei_slot1, st.imei1)
+            makeImeiInput('SIM Slot 1',      'static_imei_slot1', st.static_imei_slot1)
         ]);
         var staticSlot2El = E('div', { 'style': 'display:' + (mode2 === 'static' ? '' : 'none') }, [
-            makeImeiInput('SIM Slot 2/eSIM', 'static_imei_slot2', st.static_imei_slot2, st.imei2)
+            makeImeiInput('SIM Slot 2/eSIM', 'static_imei_slot2', st.static_imei_slot2)
         ]);
         var staticImeiSection = E('div', {
             'style': 'margin-top:4px;padding:10px 12px;background:#f8f8f8;border:1px solid #ddd;' +
@@ -449,6 +440,12 @@ return view.extend({
                 ]),
                 E('div', { 'style': 'color:var(--text-color-medium);font-size:.82em;margin-bottom:14px;padding-left:1.5em' }, [
                     'Prevents the modem from silently falling back to 2G/3G — a common IMSI-catcher downgrade vector.'
+                ]),
+                E('div', { 'style': 'margin-bottom:4px' }, [
+                    checkbox('Keep GoodCloud remote management off', 'block_cloud', st.block_cloud !== '0', securitySavedEl)
+                ]),
+                E('div', { 'style': 'color:var(--text-color-medium);font-size:.82em;margin-bottom:14px;padding-left:1.5em' }, [
+                    'Turns GL-iNet GoodCloud and its remote terminal off at every boot. Untick to manage the router from GoodCloud.'
                 ]),
 
                 E('div', { 'style': 'font-size:.85em;font-weight:600;color:var(--text-color-high);border-bottom:1px solid var(--border-color-high);padding-bottom:3px;margin-bottom:8px' }, [ 'Default Region' ]),

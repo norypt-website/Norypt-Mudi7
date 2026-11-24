@@ -1,8 +1,9 @@
 #!/bin/sh /etc/rc.common
 # Norypt Ghost — boot-time wireless identity randomization
 #
-# Runs at START=10, before repeater (15) and network (20), so MACs/SSIDs/passwords
-# are applied before the wireless subsystem brings interfaces up.
+# Runs at START=10, before network (13) and repeater (15) on GL firmware 4.8.x
+# and 4.10.x, so MACs/SSIDs/passwords are applied before the wireless
+# subsystem brings interfaces up.
 # Modem operations (sim-swap Stage 2) are handled by norypt-ghost-sim-swap at START=25.
 #
 # Each feature can be toggled via /etc/config/norypt-ghost options section:

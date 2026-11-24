@@ -35,10 +35,11 @@ case "$1" in
         _reg_timeout=$(uci -q get norypt-ghost.options.register_timeout 2>/dev/null)
         _opt_rat_lock=$(uci -q get norypt-ghost.options.rat_lock 2>/dev/null)
         _opt_default_region=$(uci -q get norypt-ghost.options.default_region 2>/dev/null)
+        _opt_block_cloud=$(uci -q get norypt-ghost.options.block_cloud 2>/dev/null)
         _last_imei_rotate=$(cat /tmp/norypt-ghost.last_imei_rotate 2>/dev/null)
         _last_wireless_rotate=$(cat /tmp/norypt-ghost.last_wireless_rotate 2>/dev/null)
         _touch_enabled=$([ -n "$(ls /etc/rc.d/S*norypt-ghost-touch 2>/dev/null)" ] && printf '1' || printf '0')
-        printf '{"imei1":"%s","imei2":"%s","ssid":"%s","guest_ssid":"%s","mac_2g":"%s","mac_5g":"%s","mac_6g":"%s","mac_sta":"%s","mac_guest2g":"%s","mac_guest5g":"%s","mac_guest6g":"%s","hostname":"%s","wifi2g_key":"%s","guest2g_key":"%s","opt_mac":"%s","opt_ssid":"%s","opt_hostname":"%s","opt_password":"%s","opt_boot":"%s","imei_mode_slot1":"%s","imei_mode_slot2":"%s","static_imei_slot1":"%s","static_imei_slot2":"%s","register_timeout":"%s","rat_lock":"%s","default_region":"%s","last_imei_rotate":"%s","last_wireless_rotate":"%s","touch_enabled":"%s"}\n' \
+        printf '{"imei1":"%s","imei2":"%s","ssid":"%s","guest_ssid":"%s","mac_2g":"%s","mac_5g":"%s","mac_6g":"%s","mac_sta":"%s","mac_guest2g":"%s","mac_guest5g":"%s","mac_guest6g":"%s","hostname":"%s","wifi2g_key":"%s","guest2g_key":"%s","opt_mac":"%s","opt_ssid":"%s","opt_hostname":"%s","opt_password":"%s","opt_boot":"%s","imei_mode_slot1":"%s","imei_mode_slot2":"%s","static_imei_slot1":"%s","static_imei_slot2":"%s","register_timeout":"%s","rat_lock":"%s","default_region":"%s","last_imei_rotate":"%s","last_wireless_rotate":"%s","touch_enabled":"%s","block_cloud":"%s"}\n' \
             "${_imei1:----}" "${_imei2:----}" \
             "$(_js "${_ssid:----}")" "$(_js "${_gssid:----}")" \
             "${_mac2g:----}" "${_mac5g:----}" "${_mac6g:----}" "${_macsta:----}" \
@@ -53,27 +54,27 @@ case "$1" in
             "${_opt_rat_lock:-1}" "${_opt_default_region:-NA}" \
             "$(_js "${_last_imei_rotate}")" \
             "$(_js "${_last_wireless_rotate}")" \
-            "$_touch_enabled"
+            "$_touch_enabled" "${_opt_block_cloud:-1}"
         ;;
     new_identity)
         # Full rotation (IMEIs + wireless/system + RAT/region) — the CLI
         # reboots the device at the end, so background and return at once.
-        : > /tmp/norypt-ghost.log
+        ( umask 077; : > /tmp/norypt-ghost.log )
         /usr/bin/norypt-ghost new-identity >> /tmp/norypt-ghost.log 2>&1 &
         printf '{"started":true}\n'
         ;;
     rotate)
-        : > /tmp/norypt-ghost.log
+        ( umask 077; : > /tmp/norypt-ghost.log )
         /usr/bin/norypt-ghost rotate >> /tmp/norypt-ghost.log 2>&1 &
         printf '{"started":true}\n'
         ;;
     rotate_wireless)
-        : > /tmp/norypt-ghost.log
+        ( umask 077; : > /tmp/norypt-ghost.log )
         /usr/bin/norypt-ghost rotate-wireless >> /tmp/norypt-ghost.log 2>&1 &
         printf '{"started":true}\n'
         ;;
     sim_swap)
-        : > /tmp/norypt-ghost.log
+        ( umask 077; : > /tmp/norypt-ghost.log )
         /usr/bin/norypt-ghost sim-swap >> /tmp/norypt-ghost.log 2>&1 &
         printf '{"started":true}\n'
         ;;
@@ -133,7 +134,7 @@ case "$1" in
                     printf '{"error":"timeout must be 10-600 seconds"}\n'; exit 1
                 fi
                 ;;
-            rat_lock)
+            rat_lock|block_cloud)
                 case "$_val" in
                     0|1) ;;
                     *) printf '{"error":"value must be 0 or 1"}\n'; exit 1 ;;
@@ -150,6 +151,12 @@ case "$1" in
                 exit 1
                 ;;
         esac
+        if [ "$_key" = "block_cloud" ] && [ "$_val" = "1" ]; then
+            uci -q set "norypt-ghost.options.block_cloud=1"; uci -q commit norypt-ghost
+            # shellcheck source=/dev/null
+            . /lib/norypt-ghost/clean.sh
+            CLOUD_BLOCK
+        fi
         if [ "$_key" = "touch_enabled" ]; then
             if [ "$_val" = "1" ]; then
                 /etc/init.d/norypt-ghost-touch enable 2>/dev/null

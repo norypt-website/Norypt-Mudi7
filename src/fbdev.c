@@ -50,7 +50,8 @@
 
 /* Module-static state. The daemon is single-threaded and runs one menu at a
  * time, so a single frozen PID / snapshot / size is sufficient. */
-static pid_t    g_gl_pid;    /* gl_screen PID we SIGSTOP'd (0 = none frozen) */
+static volatile pid_t g_gl_pid;       /* gl_screen PID we SIGSTOP'd (0 = none frozen) */
+static volatile pid_t g_takedown_pid; /* left frozen by a TAKEDOWN close (0 = none)  */
 static uint16_t *g_snapshot; /* heap copy of the stock UI frame (NULL = none) */
 static size_t   g_fb_bytes;  /* byte size of the mapped framebuffer/snapshot  */
 
@@ -207,6 +208,8 @@ void fbdev_close(fb_t *fb, int restore_gl)
      * — the reboot/poweroff tears it all down. */
     if (restore_gl && g_gl_pid > 0)
         kill(g_gl_pid, SIGCONT);
+    else if (!restore_gl && g_gl_pid > 0)
+        g_takedown_pid = g_gl_pid;   /* remembered for fbdev_resume_frozen() */
     g_gl_pid = 0;
 
     if (fb) {
@@ -214,4 +217,13 @@ void fbdev_close(fb_t *fb, int restore_gl)
         fb->w = 0;
         fb->h = 0;
     }
+}
+
+void fbdev_resume_frozen(void)
+{
+    pid_t p = g_gl_pid ? g_gl_pid : g_takedown_pid;
+    if (p > 0)
+        kill(p, SIGCONT);
+    g_gl_pid = 0;
+    g_takedown_pid = 0;
 }

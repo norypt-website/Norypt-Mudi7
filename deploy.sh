@@ -15,6 +15,9 @@ ssh "$HOST" 'mkdir -p /lib/norypt-ghost /usr/bin /usr/libexec /usr/share/norypt-
 scp -O "$REPO/files/lib/norypt-ghost/functions.sh"      "$HOST:/lib/norypt-ghost/functions.sh"
 scp -O "$REPO/files/lib/norypt-ghost/imei_generate.lua" "$HOST:/lib/norypt-ghost/imei_generate.lua"
 scp -O "$REPO/files/lib/norypt-ghost/luhn.lua"          "$HOST:/lib/norypt-ghost/luhn.lua"
+scp -O "$REPO/files/lib/norypt-ghost/profile.sh"        "$HOST:/lib/norypt-ghost/profile.sh"
+scp -O "$REPO/files/lib/norypt-ghost/identity.sh"       "$HOST:/lib/norypt-ghost/identity.sh"
+scp -O "$REPO/files/lib/norypt-ghost/clean.sh"          "$HOST:/lib/norypt-ghost/clean.sh"
 
 # CLI
 scp -O "$REPO/files/usr/bin/norypt-ghost"       "$HOST:/usr/bin/norypt-ghost"
@@ -26,18 +29,21 @@ scp -O "$REPO/files/etc/init.d/norypt-ghost-wireless"      "$HOST:/etc/init.d/no
 scp -O "$REPO/files/etc/init.d/norypt-ghost-sim-swap"      "$HOST:/etc/init.d/norypt-ghost-sim-swap"
 scp -O "$REPO/files/etc/init.d/norypt-ghost-clean"         "$HOST:/etc/init.d/norypt-ghost-clean"
 scp -O "$REPO/files/etc/init.d/norypt-ghost-touch"         "$HOST:/etc/init.d/norypt-ghost-touch"
+scp -O "$REPO/files/etc/init.d/norypt-ghost-ttl"           "$HOST:/etc/init.d/norypt-ghost-ttl"
 ssh "$HOST" 'chmod +x /etc/init.d/norypt-ghost-wireless /etc/init.d/norypt-ghost-sim-swap \
-        /etc/init.d/norypt-ghost-clean /etc/init.d/norypt-ghost-touch \
+        /etc/init.d/norypt-ghost-clean /etc/init.d/norypt-ghost-touch /etc/init.d/norypt-ghost-ttl \
     && rm -f /etc/rc.d/S*norypt-ghost-wireless /etc/rc.d/S*norypt-ghost-sim-swap \
         /etc/rc.d/S*norypt-ghost-clean /etc/rc.d/S*norypt-ghost-touch \
     && /etc/init.d/norypt-ghost-wireless enable \
     && /etc/init.d/norypt-ghost-sim-swap enable \
     && /etc/init.d/norypt-ghost-clean enable \
-    && /etc/init.d/norypt-ghost-touch enable'
+    && /etc/init.d/norypt-ghost-touch enable \
+    && /etc/init.d/norypt-ghost-ttl enable'
 
 # Data pools and splash frames
 scp -O "$REPO/files/usr/share/norypt-ghost/tac_pool.json" "$HOST:/usr/share/norypt-ghost/tac_pool.json"
 scp -O "$REPO/files/usr/share/norypt-ghost/oui_pool.json" "$HOST:/usr/share/norypt-ghost/oui_pool.json"
+scp -O "$REPO/files/usr/share/norypt-ghost/profiles.json" "$HOST:/usr/share/norypt-ghost/profiles.json"
 ssh "$HOST" 'mkdir -p /usr/share/norypt-ghost/screens'
 scp -O "$REPO/files/usr/share/norypt-ghost/screens/"*.rgb565 "$HOST:/usr/share/norypt-ghost/screens/"
 

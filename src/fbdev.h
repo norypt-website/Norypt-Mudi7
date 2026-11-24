@@ -43,4 +43,11 @@ int fbdev_open(fb_t *out);
  */
 void fbdev_close(fb_t *fb, int restore_gl);
 
+/* SIGCONT any gl_screen this module froze — the live freeze (menu open) or the
+ * one left frozen by a TAKEDOWN close — and forget it. Only kill(2) and plain
+ * stores: async-signal-safe, so it may be called from a signal handler. Used
+ * when the daemon is told to stop, and when a takedown action did not actually
+ * take the device down, so the panel is never left frozen. */
+void fbdev_resume_frozen(void);
+
 #endif
