@@ -23,7 +23,7 @@ concurrency:
 jobs:
   test:
     name: Host tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       # jsonfilter is an OpenWrt utility and is not packaged for Ubuntu. The
@@ -37,7 +37,7 @@ jobs:
 
   build:
     name: Build IPK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: test
 
     permissions:
