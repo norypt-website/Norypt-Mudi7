@@ -220,6 +220,7 @@ norypt-ghost sim-swap          # stage 1 of the SIM-swap flow (powers off!)
 norypt-ghost prepare-upgrade   # run right before a firmware upgrade (wipes RAM-only history)
 norypt-ghost forget-sims       # forget every SIM that is not inserted
 norypt-ghost wipe-logs         # delete on-flash logs now and move log dirs to RAM
+norypt-ghost wipe-sms          # delete every stored SMS now
 norypt-ghost install           # one-time setup: enable services, write defaults
 norypt-ghost help              # full usage, including per-slot mode flags
 ```
@@ -308,7 +309,7 @@ Norypt Ghost reduces the **device-identity** trail a mobile hotspot leaves: the 
 |---|---|
 | **The SIM itself** | IMSI/ICCID identify the subscriber regardless of IMEI. Rotating the IMEI alone unlinks only the *hardware* — use the [SIM-swap flow](#sim-swap-flow) for a clean break |
 | **The eSIM EID** | A fixed hardware identifier of the eUICC, presented during remote provisioning. Not rotatable |
-| **The eSIM app's cloud check-in** | GL-iNet's bundled eSIM client sends the slot's IMEI to its provider's server. With Norypt Ghost that is the *rotated* IMEI (its local copy now lives in RAM), but it is still an outbound identifier — disable the eSIM service if you don't use eSIM |
+| **The eSIM app's cloud check-in** | GL-iNet's bundled eSIM client sends the slot's IMEI to its provider's server. Norypt Ghost keeps it off by default (`block_esim`); if you turn it back on to manage eSIM profiles, it sends the *rotated* IMEI |
 | **Static IMEI mode** | If you choose the `static` IMEI mode, the IMEI you enter is stored in `/etc/config/norypt-ghost` by design. The default `random` mode stores none |
 | **6 GHz AFC location** | When 6 GHz standard-power AFC is configured, GL-iNet stores the device location (encrypted) in `/etc/afc/` |
 | **Location & behavior** | Reappearing in the same place, at the same times, with the same traffic patterns re-links identities no rotation can hide |
@@ -326,7 +327,7 @@ The single command that changes **everything at once**, across a clean reboot:
 4. **Stages the wireless + system identity** into UCI: all six AP BSSIDs (profile's Wi-Fi OUI), the repeater STA MAC (client OUI), the **wired** WAN/LAN MAC, SSID + guest SSID, both passwords, hostname, and the DHCP hostname sent upstream.
 5. **Regenerates SSH host keys and the TLS certs** (GL admin UI on nginx, and LuCI) — permanent device identifiers that survive `rotate`/`rotate-wireless` untouched. The admin cert keeps GL-iNet's stock subject, shared by every GL unit, so only its key and dates differ.
 6. **Shows the join credentials**: the SSID and password on the console (never logged), plus a `WIFI:` QR on the device screen when `qrencode` and a framebuffer viewer are installed. GL's own Wi-Fi screen page also shows them.
-7. **Forgets old SIMs**: GL's per-SIM settings and APN history keep only the SIM(s) inserted now.
+7. **Fresh start, settings kept**: every SMS, every on-flash log, crash dump, shell history and connected-device record is deleted (with eMMC discard), and GL's per-SIM settings keep only the SIM(s) inserted now. Settings (VPN, Wi-Fi, firewall, the current SIM's APN, passwords) are kept.
 8. **Reboots.** RF stays off from step 3 until the reboot, and the modem comes back up already holding the new IMEIs, so the old IMEI never re-attaches. At S25 the IMEIs are verified (and rewritten with RF off if the modem disagrees); the check repeats on every boot until it passes. Because it's a reboot, all RAM-resident correlation state (client-MAC DB, DHCP leases, ARP/conntrack, in-memory log) is gone too.
 
 > **Why the IMEIs are written before the reboot:** the AT interface only answers at S25, after `gl_cellular_manager` (S23) has already attached. An IMEI staged only for the next boot would let the old IMEI re-attach for a few seconds, from the same cell, right before the new one.
@@ -449,6 +450,8 @@ Applied by `norypt-ghost-clean` at **S9**, before any tracking daemon starts:
 - **Web server error log discarded.** GL copies nginx's RAM error log (client IPs) to `/etc/nginx/error.log` every 10 minutes and at shutdown; the RAM log now points to `/dev/null` and the flash copy stays empty.
 - **Old SIMs forgotten.** GL keeps per-SIM settings and APN history keyed by ICCID for every SIM ever inserted. `new-identity` keeps only the inserted SIM(s), sim-swap Stage 1 forgets the outgoing SIM entirely, and `norypt-ghost forget-sims` does it on demand.
 - **GoodCloud off.** GL's cloud management and its remote-terminal client are disabled at every boot (option `block_cloud`, default on; LuCI toggle under Security).
+- **SMS wiped weekly and on every identity change.** GL stores every SMS (inbox, sent, drafts, send queue) as a file under `/etc/spool/sms`, and each file's header records the device IMEI and the SIM IMSI at that moment, so old messages bridge identities. Every Sunday at 04:00, on `new-identity` and on sim-swap Stage 1, each message is overwritten and deleted (with eMMC discard), and the SIM and modem message stores are emptied. Option `sms_wipe`, default on; LuCI toggle plus a **Wipe all SMS now** button; `norypt-ghost wipe-sms` on demand.
+- **eSIM client off.** GL's eSIM client (LPA) sends the eSIM slot's IMEI to the eSIM provider's server, so it is disabled at every boot (option `block_esim`, default on; LuCI toggle under Security). Untick it to download or switch eSIM profiles.
 - **No IMEI on flash, ever.** The `new-identity` boot check stores only the profile id and a 4-hex check tag (16 bits, not reversible to an IMEI); the on-screen handoff file holds only the last three digits.
 - **Deleted with TRIM.** Install, `wipe-logs` and `prepare-upgrade` remount the ext4 partitions with `discard` while deleting, so the eMMC is told the freed blocks are unused. Physical erasure is up to the eMMC controller.
 - **dnsmasq** runs with `logqueries=0` and `cachelocal=0` — no per-client DNS query log, no persisted cache.
